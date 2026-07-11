@@ -1,0 +1,16 @@
+[general]
+name=Profili, Sezioni e Comuni
+description=Generate elevation profiles, cross sections with earthwork volumes, download raster areas from TINITALY/HR-DTM-5m sources, and search Italian municipality boundaries.
+about=Strumento avanzato in grafica SPATIQON per profili altimetrici, sezioni trasversali reali con sterri/riporti/accumuli, disegni tecnici vettoriali, download raster da area SHIFT-draw da ZIP ufficiali TINITALY 1.1 e HR-DTM-5m Zenodo con progress/ETA e citazione/licenza, ricerca confini comunali via OpenStreetMap/Nominatim e riferimento download ufficiale ISTAT. Advanced SPATIQON-style tool for elevation profiles, real cross sections with cut/fill/stockpile volumes, vector section drawings, SHIFT-draw raster download, Italian municipality lookup, and PNG/PDF/CSV/GPKG/QGIS layout exports.
+qgisMinimumVersion=3.16
+qgisMaximumVersion=4.99
+version=1.2.0
+author=Dott. Sarino Alfonso Grande
+email=info@sinocloud.it
+tracker=
+repository=https://github.com/sag1687
+category=Raster
+icon=icon.svg
+tags=elevation,profile,cross-section,municipality,comuni,dem,dtm,terrain,tinitaly,zenodo,istat,cut-fill
+experimental=False
+license=GPL-2.0
