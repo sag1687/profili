@@ -4,7 +4,7 @@ description=Profili altimetrici, sezioni con volumi di sterro/riporto, download 
 about=Strumento avanzato in grafica SPATIQON per profili altimetrici, sezioni trasversali reali con sterri/riporti/accumuli, disegni tecnici vettoriali, download raster da area SHIFT-draw da ZIP ufficiali TINITALY 1.1 e HR-DTM-5m Zenodo con progress/ETA e citazione/licenza, ricerca confini comunali via OpenStreetMap/Nominatim e riferimento download ufficiale ISTAT, e confronto prima/dopo lavori tra GeoPackage generati dal plugin e tra DTM (raster differenza con volumi scavo/riporto, senza AI). Advanced SPATIQON-style tool for elevation profiles, real cross sections with cut/fill/stockpile volumes, vector section drawings, SHIFT-draw raster download, Italian municipality lookup, before/after works comparison (plugin GeoPackages and DTM difference with cut/fill volumes, AI-free), and PNG/PDF/CSV/GPKG/QGIS layout exports.
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
-version=1.3.3
+version=1.3.4
 author=Dott. Sarino Alfonso Grande
 email=info@sinocloud.it
 tracker=https://github.com/sag1687/profili/issues
@@ -15,7 +15,12 @@ icon=icon.svg
 tags=elevation,profile,cross-section,municipality,comuni,dem,dtm,terrain,tinitaly,zenodo,istat,cut-fill,comparison,confronto,dod,change-detection
 experimental=False
 license=GPL-2.0
-changelog=1.3.3
+changelog=1.3.4
+    - IT: Scheda Info: elenco corretto degli altri plugin pubblicati dall'autore su plugins.qgis.org (QGIS Ledger, Q-Press, Quick CRS Fixer, STAC Browser, GeoBridgeIT, TAF Italia)
+    - EN: Info tab: correct list of the author's other published plugins on plugins.qgis.org (QGIS Ledger, Q-Press, Quick CRS Fixer, STAC Browser, GeoBridgeIT, TAF Italia)
+    - IT: Verifica end-to-end su QGIS 4.2 headless: export GeoPackage, dialog, layout di stampa multi-foglio con legenda/reticolo/scala e confronto DTM
+    - EN: End-to-end verification on headless QGIS 4.2: GeoPackage export, dialog, multi-sheet print layout with legend/grid/scale bar and DTM comparison
+    1.3.3
     - IT: Hardening sicurezza: validazione esplicita dello schema URL (solo http/https) su tutte le richieste di rete; azzerati gli avvisi Bandit di livello medio/alto
     - EN: Security hardening: explicit URL scheme validation (http/https only) on all network requests; medium/high Bandit findings reduced to zero
     - IT: Stile codice conforme anche a linter severi: eliminati tutti i W503 (a capo prima di operatore binario) ed E241 (spazi multipli dopo virgola)

@@ -2,7 +2,7 @@
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B%20%7C%204.x-589632?logo=qgis&logoColor=white)](https://qgis.org/)
 [![License](https://img.shields.io/badge/license-GPL--2.0-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.3-informational)](metadata.txt)
+[![Version](https://img.shields.io/badge/version-1.3.4-informational)](metadata.txt)
 
 Plugin QGIS per profili altimetrici, sezioni trasversali con volumi di sterro/riporto, download raster DTM italiani, ricerca confini comunali e confronto prima/dopo lavori (GeoPackage e differenza DTM).
 QGIS plugin for elevation profiles, cross sections with cut/fill volumes, Italian DTM raster download, Italian municipality boundary search and before/after works comparison (GeoPackage and DTM difference).
@@ -615,6 +615,7 @@ Il plugin usa `QtWebEngine` per un rendering ricco (grafico, accordion). Se il t
 
 Repository/autore:
 
+- Altri plugin QGIS dell'autore: <https://plugins.qgis.org/plugins/author/Dott.%20Sarino%20Alfonso%20Grande/>
 - GitHub: <https://github.com/sag1687>
 - Sito: <https://sinocloud.it>
 
@@ -1218,6 +1219,7 @@ The plugin uses `QtWebEngine` for rich rendering (chart, accordion). If your QGI
 
 Repository/author:
 
+- Other QGIS plugins by the author: <https://plugins.qgis.org/plugins/author/Dott.%20Sarino%20Alfonso%20Grande/>
 - GitHub: <https://github.com/sag1687>
 - Website: <https://sinocloud.it>
 

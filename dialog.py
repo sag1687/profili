@@ -572,14 +572,29 @@ INFO_HTML = """
 
 <hr class="section-sep"/>
 <h2>ALTRI PLUGIN DELLO STESSO AUTORE / OTHER PLUGINS BY THE SAME AUTHOR</h2>
-<ul>
-  <li><b>Profilo GitHub verificato / Verified GitHub profile:</b>
-      <a href="https://github.com/sag1687">github.com/sag1687</a></li>
-  <li><b>meteo:</b> <a href="https://github.com/sag1687/meteo">github.com/sag1687/meteo</a></li>
-  <li><b>CorsoQFIELD:</b> <a href="https://github.com/sag1687/CorsoQFIELD">github.com/sag1687/CorsoQFIELD</a></li>
-  <li><b>Codice-Libero:</b> <a href="https://github.com/sag1687/Codice-Libero">github.com/sag1687/Codice-Libero</a></li>
-  <li><b>qgis-docker:</b> <a href="https://github.com/sag1687/qgis-docker">github.com/sag1687/qgis-docker</a></li>
-</ul>
+<p>Pagina autore ufficiale / Official author page:
+   <a href="https://plugins.qgis.org/plugins/author/Dott.%20Sarino%20Alfonso%20Grande/">plugins.qgis.org — Dott. Sarino Alfonso Grande</a></p>
+<table>
+  <tr><th>Plugin</th><th>Descrizione / Description</th></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/qgis_ledger/">QGIS Ledger</a></td>
+      <td>Controllo versione stile Git per QGIS: diff geometrico semantico, rollback deterministico e sincronizzazione multi-cloud.
+          / Git-like version control for QGIS: semantic geometric diffing, deterministic rollback and multi-cloud sync.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/q_press/">Q-Press</a></td>
+      <td>Generatore PDF cartografico professionale per QGIS 4/Qt6 con selezione area SHIFT+trascina.
+          / Professional cartographic PDF generator for QGIS 4/Qt6 with Shift+Drag area selection.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/crs/">Quick CRS Fixer</a></td>
+      <td>Rilevamento e correzione automatica dei problemi di CRS.
+          / Automatic detection and fixing of CRS problems.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/stac_browser/">STAC Browser</a></td>
+      <td>Ricerca dati di osservazione della Terra disegnando un'area o digitando un indirizzo.
+          / Find open Earth-observation data by drawing an area or typing an address.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/geobridge/">GeoBridgeIT</a></td>
+      <td>Client QGIS non ufficiale per le API IGM: conversione di coordinate e layer vettoriali.
+          / Unofficial QGIS client for the IGM APIs: coordinate and vector layer conversion.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/QGIS_TAF_Plugin/">TAF Italia</a></td>
+      <td>Scarica e converte i Punti Fiduciali (TAF) dell'Agenzia delle Entrate in CSV/WGS84.
+          / Downloads and converts Italian TAF fiducial points to CSV/WGS84.</td></tr>
+</table>
 
 <hr class="section-sep"/>
 <p style="color:#3a6070;font-size:11px;">
