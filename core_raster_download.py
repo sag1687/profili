@@ -221,12 +221,9 @@ def tinitaly_tile_extent(tile_code):
 
 
 def _rect_intersects(a, b):
-    return not (
-        a.xMaximum() <= b.xMinimum()
-        or a.xMinimum() >= b.xMaximum()
-        or a.yMaximum() <= b.yMinimum()
-        or a.yMinimum() >= b.yMaximum()
-    )
+    x_overlap = a.xMinimum() < b.xMaximum() and a.xMaximum() > b.xMinimum()
+    y_overlap = a.yMinimum() < b.yMaximum() and a.yMaximum() > b.yMinimum()
+    return x_overlap and y_overlap
 
 
 def _transform_rect(rect, source_crs, target_crs):
@@ -248,10 +245,10 @@ def _transform_rect(rect, source_crs, target_crs):
 
 def tinitaly_tile_index():
     req = urllib.request.Request(
-        TINITALY_DOWNLOAD_PAGE,
+        _ensure_http_url(TINITALY_DOWNLOAD_PAGE),
         headers={"User-Agent": "ProfiliSezioniComuni/1.2 (+info@sinocloud.it)"},
     )
-    with urllib.request.urlopen(req, timeout=45) as response:
+    with urllib.request.urlopen(req, timeout=45) as response:  # nosec B310 - schema http(s) validato sopra
         html = response.read().decode("utf-8", "replace")
 
     tiles = []
@@ -368,13 +365,21 @@ def _clip_remote_raster(source_key, rect, output_path, progress_callback):
     raise RuntimeError("Could not clip remote raster: {0}".format(last_error))
 
 
+def _ensure_http_url(url):
+    """Allow only http(s) URLs — blocks file://, ftp:// and similar schemes."""
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
+    return url
+
+
 def _download_file(url, output_path, progress_callback, start, end, label):
     headers = {"User-Agent": "ProfiliSezioniComuni/1.2 (+info@sinocloud.it)"}
-    req = urllib.request.Request(url, headers=headers)
+    req = urllib.request.Request(_ensure_http_url(url), headers=headers)
     tmp_path = output_path + ".part"
     done = 0
     started = time.time()
-    with urllib.request.urlopen(req, timeout=60) as response:
+    with urllib.request.urlopen(req, timeout=60) as response:  # nosec B310 - schema validato sopra
         total = int(response.headers.get("Content-Length") or 0)
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
@@ -462,7 +467,8 @@ def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, pro
         vsi_inputs.append(_tinitaly_zip_vsi_path(zip_path, tile["code"]))
 
     gdal = _configure_gdal_network()
-    vrt_path = tempfile.mktemp(prefix="tinitaly_1_1_", suffix=".vrt")
+    vrt_fd, vrt_path = tempfile.mkstemp(prefix="tinitaly_1_1_", suffix=".vrt")
+    os.close(vrt_fd)
     try:
         vrt = gdal.BuildVRT(vrt_path, vsi_inputs)
         if vrt is None:

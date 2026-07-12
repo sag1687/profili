@@ -55,19 +55,3 @@ QtCompat = _QtCompat()
 def ensure_qt_compat(qt):
     # Backward compatibility for old code that calls ensure_qt_compat(Qt)
     return qt
-
-
-_MISSING = object()
-
-
-def compat_enum(owner, name, *groups, default=_MISSING):
-    """Return an enum value exposed either directly or via a nested enum group."""
-    if hasattr(owner, name):
-        return getattr(owner, name)
-    for group_name in groups:
-        group = getattr(owner, group_name, None)
-        if group is not None and hasattr(group, name):
-            return getattr(group, name)
-    if default is not _MISSING:
-        return default
-    raise AttributeError(f"{owner!r} has no enum value {name!r}")

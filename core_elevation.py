@@ -50,17 +50,24 @@ from qgis.core import (
 _UA = "ProfiliSezioniComuni/1.0 (+info@sinocloud.it)"
 
 
+def _open_https(url, timeout):
+    """urlopen limited to https URLs — blocks file://, ftp:// and custom schemes."""
+    if urllib.parse.urlparse(url).scheme.lower() != "https":
+        raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - schema https validato sopra
+
+
 def _fetch_open_elevation(points_wgs84):
     """Open-Elevation API — max 80 pts per chunk."""
     values = []
     for start in range(0, len(points_wgs84), 80):
         chunk = points_wgs84[start:start + 80]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
-        url = ("https://api.open-elevation.com/api/v1/lookup?"
-               + urllib.parse.urlencode({"locations": locs}))
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        query = urllib.parse.urlencode({"locations": locs})
+        url = f"https://api.open-elevation.com/api/v1/lookup?{query}"
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with _open_https(url, timeout=30) as resp:
                 payload = json.loads(resp.read().decode("utf-8", "replace"))
             results = payload.get("results") or []
             if len(results) != len(chunk):
@@ -80,11 +87,10 @@ def _fetch_opentopo(points_wgs84):
     for start in range(0, len(points_wgs84), chunk_size):
         chunk = points_wgs84[start:start + chunk_size]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
-        url = ("https://api.opentopodata.org/v1/srtm90m?"
-               + urllib.parse.urlencode({"locations": locs}))
-        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        query = urllib.parse.urlencode({"locations": locs})
+        url = f"https://api.opentopodata.org/v1/srtm90m?{query}"
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with _open_https(url, timeout=30) as resp:
                 payload = json.loads(resp.read().decode("utf-8", "replace"))
             if payload.get("status") != "OK":
                 raise RuntimeError(f"OpenTopoData status: {payload.get('status')}")
@@ -706,23 +712,6 @@ def generate_profile_results_html(
     src_label = source_labels.get(source, raster_name or "DEM/DTM")
     created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    def _detail_row(label, value):
-        return (
-            f"<tr><th>{_html.escape(str(label))}</th>"
-            f"<td>{_html.escape(str(value))}</td></tr>"
-        )
-
-    profile_rows = "".join([
-        _detail_row("Project", project_title),
-        _detail_row("Distance", dist_label),
-        _detail_row("Source", src_label),
-        _detail_row("Min elevation (m)", f"{min_z:.2f}"),
-        _detail_row("Max elevation (m)", f"{max_z:.2f}"),
-        _detail_row("Samples", len(points)),
-        _detail_row("Pickets", len(pickets)),
-        _detail_row("Created", created_at),
-    ])
-
     html = f"""
     <div class="summary-card">
         <strong>Project:</strong> {_html.escape(project_title)} &nbsp;·&nbsp;
@@ -735,47 +724,20 @@ def generate_profile_results_html(
         <span style="color:#4a8090;">{created_at}</span>
     </div>
 
-    <script>
-    function toggleResultPanel(panelId) {{
-        const node = document.getElementById(panelId);
-        if (!node) return;
-        const isOpen = node.style.display === 'block';
-        node.style.display = isOpen ? 'none' : 'block';
-    }}
-    </script>
+    <div class="section-title">Elevation Chart / Profilo Altimetrico</div>
+    <div class="chart-container">
+        {chart_html or svg_content}
+    </div>
 
-    <div class="section-title">Result Panels / Pannelli Risultato</div>
-
-    <div class="accordion-list">
-        <div class="accordion-item">
-            <button class="accordion-head" onclick="toggleResultPanel('profile-chart-body')">
-                <span class="accordion-title">Elevation Chart / Profilo Altimetrico</span>
-                <span class="accordion-meta">{_html.escape(dist_label)} · {_html.escape(src_label)}</span>
-            </button>
-            <div class="accordion-body" id="profile-chart-body" style="display:block;">
-                <div class="chart-container">
-                    {chart_html or svg_content}
-                </div>
-                <div class="chart-detail-table">
-                    <table><tbody>{profile_rows}</tbody></table>
-                </div>
-            </div>
-        </div>
-
-        <div class="accordion-item">
-            <button class="accordion-head" onclick="toggleResultPanel('profile-pickets-body')">
-                <span class="accordion-title">Pickets Table / Fincatura Picchetti</span>
-                <span class="accordion-meta">{len(pickets)} items</span>
-            </button>
-            <div class="accordion-body" id="profile-pickets-body">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>{lbl_peg}</th><th>{lbl_progressive} (m)</th><th>Partial (m)</th>
-                            <th>{lbl_ground} (m)</th><th>Longitude</th><th>Latitude</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+    <div class="section-title">Pickets Table / Fincatura Picchetti</div>
+    <table>
+        <thead>
+            <tr>
+                <th>{lbl_peg}</th><th>{lbl_progressive} (m)</th><th>Partial (m)</th>
+                <th>{lbl_ground} (m)</th><th>Longitude</th><th>Latitude</th>
+            </tr>
+        </thead>
+        <tbody>
     """
     for p in pickets:
         elev = p.get("elevation")
@@ -788,25 +750,16 @@ def generate_profile_results_html(
             f"<td>{p.get('lon', 0):.7f}</td>"
             f"<td>{p.get('lat', 0):.7f}</td></tr>\n"
         )
-    html += """
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    html += "</tbody></table>"
 
-        <div class="accordion-item">
-            <button class="accordion-head" onclick="toggleResultPanel('profile-samples-body')">
-                <span class="accordion-title">All Samples / Tutti i Campioni</span>
-                <span class="accordion-meta">"""
-    html += f"""{len(points)} points</span>
-            </button>
-            <div class="accordion-body" id="profile-samples-body">
-                <table>
-                    <thead>
-                        <tr><th>#</th><th>Distance (m)</th><th>Elevation (m)</th>
-                            <th>Lon / X</th><th>Lat / Y</th></tr>
-                    </thead>
-                    <tbody>
+    html += """
+    <div class="section-title">All Samples / Tutti i Campioni</div>
+    <table>
+        <thead>
+            <tr><th>#</th><th>Distance (m)</th><th>Elevation (m)</th>
+                <th>Lon / X</th><th>Lat / Y</th></tr>
+        </thead>
+        <tbody>
     """
     for i, p in enumerate(points):
         elev = p.get("elevation")
@@ -816,11 +769,5 @@ def generate_profile_results_html(
             f"<td>{p.get('lon', p.get('x', 0)):.7f}</td>"
             f"<td>{p.get('lat', p.get('y', 0)):.7f}</td></tr>\n"
         )
-    html += """
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    """
+    html += "</tbody></table>"
     return html

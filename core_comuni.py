@@ -41,12 +41,15 @@ _NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 
 def _nominatim_get(endpoint, params):
     """Perform a Nominatim GET request and return parsed JSON."""
-    url = f"{_NOMINATIM_BASE}/{endpoint}?" + urllib.parse.urlencode(params)
+    query = urllib.parse.urlencode(params)
+    url = f"{_NOMINATIM_BASE}/{endpoint}?{query}"
+    if urllib.parse.urlparse(url).scheme.lower() != "https":
+        raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
     req = urllib.request.Request(url, headers={
         "User-Agent": _UA,
         "Accept-Language": "it,en",
     })
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310 - schema https validato sopra
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 

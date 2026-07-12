@@ -36,13 +36,6 @@ from qgis.core import (
 )
 
 
-def _section_lookup_key(value):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return value
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Cross-sections calculation
 # ──────────────────────────────────────────────────────────────────────
@@ -109,8 +102,7 @@ def calculate_cross_sections(
     design_grade = design_grade_pct
     if design_start is not None and design_end is None and design_grade is not None:
         design_end = design_start + (design_grade / 100.0) * total_len
-    elif (design_start is not None and design_end is not None
-          and design_grade is None and total_len > 0):
+    elif None not in (design_start, design_end) and design_grade is None and total_len > 0:
         design_grade = ((design_end - design_start) / total_len) * 100.0
 
     def _design_elevation_at(progressive_m):
@@ -550,11 +542,6 @@ def generate_cross_sections_html(data):
     """Compact HTML for embedding in Results tab."""
     dp = data.get("design_profile", {})
     has_ref = dp.get("start_elevation") is not None
-    sections = data.get("sections", [])
-    sections_by_index = {
-        _section_lookup_key(sec.get("index")): sec
-        for sec in sections
-    }
     html = f"""
     <div style="background:#0f172a;border:1px solid #243244;color:#cbd5e1;padding:12px;
                 border-radius:6px;margin-bottom:12px;font-size:13px;line-height:1.5;">
@@ -597,7 +584,7 @@ def generate_cross_sections_html(data):
         """
 
     svgs = ""
-    for sec in sections[:12]:
+    for sec in data["sections"][:12]:
         pts = [p for p in sec["points"] if p["elevation"] is not None]
         if len(pts) < 2:
             svgs += (
@@ -663,12 +650,10 @@ def generate_cross_sections_html(data):
     if data.get("volumes"):
         rows = ""
         for v in data["volumes"]:
-            s1d = sections_by_index.get(_section_lookup_key(v.get("from_section")))
-            s2d = sections_by_index.get(_section_lookup_key(v.get("to_section")))
+            s1d = data["sections"][v["from_section"] - 1]
+            s2d = data["sections"][v["to_section"] - 1]
             grade_str = "<td style='text-align:center;'>—</td>"
-            if (s1d and s2d
-                    and s1d["min_elevation"] is not None and s2d["min_elevation"] is not None
-                    and v["distance_m"] > 0):
+            if None not in (s1d["min_elevation"], s2d["min_elevation"]) and v["distance_m"] > 0:
                 z1 = (s1d["min_elevation"] + s1d["max_elevation"]) / 2
                 z2 = (s2d["min_elevation"] + s2d["max_elevation"]) / 2
                 g = (z2 - z1) / v["distance_m"] * 100
@@ -678,8 +663,8 @@ def generate_cross_sections_html(data):
                 <td style="text-align:center;padding:4px;">{v["from_section"]}→{v["to_section"]}</td>
                 <td style="text-align:right;padding:4px;">{v["distance_m"]:.1f}</td>
                 {grade_str}
-                <td style="text-align:right;padding:4px;">{((s1d or {}).get("area_m2") or 0):.2f}</td>
-                <td style="text-align:right;padding:4px;">{((s2d or {}).get("area_m2") or 0):.2f}</td>
+                <td style="text-align:right;padding:4px;">{(s1d.get("area_m2") or 0):.2f}</td>
+                <td style="text-align:right;padding:4px;">{(s2d.get("area_m2") or 0):.2f}</td>
                 <td style="text-align:right;font-weight:600;padding:4px;">{v["volume_m3"]:,.1f}</td>
             """
             if has_ref:
@@ -719,63 +704,6 @@ def generate_cross_sections_results_html(data):
     dp = data.get("design_profile", {})
     has_ref = dp.get("start_elevation") is not None
     created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    sections = data.get("sections", [])
-    sections_by_index = {
-        _section_lookup_key(sec.get("index")): sec
-        for sec in sections
-    }
-
-    def _section_svg(sec, w, h):
-        pts = [p for p in sec["points"] if p["elevation"] is not None]
-        if len(pts) < 2:
-            return (
-                f'<svg width="{w}" height="{h}"><text x="14" y="24" '
-                f'style="fill:#8ba3c7;font-size:12px;">No data</text></svg>'
-            )
-        px, py = 12, 12
-        offsets = [float(p["offset_m"]) for p in pts]
-        elevs_sec = [float(p["elevation"]) for p in pts]
-        if sec.get("design_elevation") is not None:
-            elevs_sec.append(float(sec["design_elevation"]))
-        mn_x, mx_x = min(offsets), max(offsets)
-        mn_y, mx_y = min(elevs_sec), max(elevs_sec)
-        span_x = (mx_x - mn_x) or 1.0
-        span_y = (mx_y - mn_y) or 1.0
-
-        def xo(o):
-            return px + (float(o) - mn_x) / span_x * (w - 2 * px)
-
-        def yo(e):
-            return py + (1 - (float(e) - mn_y) / span_y) * (h - 2 * py - 18)
-
-        d_path = " ".join(
-            f"{'M' if i == 0 else 'L'}{xo(pts[i]['offset_m']):.1f},{yo(pts[i]['elevation']):.1f}"
-            for i in range(len(pts))
-        )
-        fill_d = (
-            f"{d_path} L{xo(offsets[-1]):.1f},{h - py - 18:.1f} "
-            f"L{xo(offsets[0]):.1f},{h - py - 18:.1f} Z"
-        )
-        ref_line = ""
-        if has_ref and sec.get("design_elevation") is not None:
-            try:
-                ry = yo(float(sec["design_elevation"]))
-                ref_line = (
-                    f'<line x1="{px}" y1="{ry:.1f}" x2="{w - px}" y2="{ry:.1f}" '
-                    f'stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 4"/>'
-                )
-            except Exception:
-                pass
-        return f"""
-        <svg width="{w}" height="{h}" viewBox="0 0 {w} {h}">
-            <rect x="0.5" y="0.5" width="{w - 1}" height="{h - 1}" rx="8" ry="8"
-                  fill="#0e1118" stroke="#2d3757"/>
-            <path d="{fill_d}" fill="rgba(52,211,153,0.14)" stroke="none"/>
-            <path d="{d_path}" fill="none" stroke="#34d399" stroke-width="2.5"
-                  stroke-linejoin="round" stroke-linecap="round"/>
-            {ref_line}
-        </svg>
-        """
 
     html = f"""
     <div class="summary-card">
@@ -814,122 +742,55 @@ def generate_cross_sections_results_html(data):
             )
         html += "</div>"
 
-    card_items = []
-    detail_panels = []
-    for sec in sections:
-        pts = [p for p in sec["points"] if p["elevation"] is not None]
-        detail_id = f"sec-detail-{int(sec.get('index') or 0)}"
-        if len(pts) < 2:
-            card_items.append(
-                f"""
-                <button class="section-result-card is-empty" type="button"
-                        data-target="{detail_id}"
-                        onclick="openSectionResult('{detail_id}', this)">
-                    <span class="section-result-title">Sezione {sec["index"]:02d}</span>
-                    <span class="section-result-subtitle">Progressiva {sec["progressive_m"]:.2f} m</span>
-                    <span class="section-result-meta">Nessun dato quota disponibile</span>
-                </button>
-                """
-            )
-            detail_panels.append(
-                f"""
-                <div class="section-detail-panel is-empty" id="{detail_id}">
-                    <div class="chart-detail-header">
-                        <strong>Sezione {sec["index"]:02d}</strong><br>
-                        <span>Progressiva {sec["progressive_m"]:.2f} m</span>
-                    </div>
-                    <div class="summary-card">
-                        Nessun dato altimetrico disponibile per questa sezione.
-                    </div>
-                </div>
-                """
-            )
-            continue
-        min_z = min(float(p["elevation"]) for p in pts)
-        max_z = max(float(p["elevation"]) for p in pts)
-        detail_rows = [
-            ("Sezione", sec["index"]),
-            ("Progressiva (m)", f'{sec["progressive_m"]:.2f}'),
-            ("Quota min (m)", "—" if sec["min_elevation"] is None else f'{sec["min_elevation"]:.2f}'),
-            ("Quota max (m)", "—" if sec["max_elevation"] is None else f'{sec["max_elevation"]:.2f}'),
-            ("Quota progetto (m)", "—" if sec.get("design_elevation") is None else f'{sec["design_elevation"]:.2f}'),
-            ("Area (m²)", f'{sec.get("area_m2", 0):.2f}'),
-            ("Sterro (m²)", f'{sec.get("cut_area_m2", 0):.2f}'),
-            ("Riporto (m²)", f'{sec.get("fill_area_m2", 0):.2f}'),
-            ("Campioni validi", len(pts)),
-        ]
-        rows_html = "".join(
-            f"<tr><th>{_html.escape(str(label))}</th><td>{_html.escape(str(value))}</td></tr>"
-            for label, value in detail_rows
-        )
-        card_items.append(
-            f"""
-            <button class="section-result-card" type="button"
-                    data-target="{detail_id}"
-                    onclick="openSectionResult('{detail_id}', this)">
-                <span class="section-result-title">Sezione {sec["index"]:02d}</span>
-                <span class="section-result-subtitle">Progressiva {sec["progressive_m"]:.2f} m</span>
-                <span class="section-result-meta">Quote {min_z:.2f} - {max_z:.2f} m</span>
-                <span class="section-result-chips">
-                    <span class="section-result-chip">Area {sec.get("area_m2", 0):.2f} m²</span>
-                    <span class="section-result-chip">Sterro {sec.get("cut_area_m2", 0):.2f} m²</span>
-                    <span class="section-result-chip">Riporto {sec.get("fill_area_m2", 0):.2f} m²</span>
-                </span>
-            </button>
-            """
-        )
-        detail_panels.append(
-            f"""
-            <div class="section-detail-panel" id="{detail_id}">
-                <div class="chart-detail-header">
-                    <strong>Sezione {sec["index"]:02d}</strong><br>
-                    <span>Progressiva {sec["progressive_m"]:.2f} m · Quote {min_z:.2f} - {max_z:.2f} m</span>
-                </div>
-                <div class="chart-detail-body">
-                    <div class="chart-detail-graphic">{_section_svg(sec, 540, 220)}</div>
-                    <div class="chart-detail-table">
-                        <table><tbody>{rows_html}</tbody></table>
-                    </div>
-                </div>
-            </div>
-            """
-        )
-
-    html += """
-    <script>
-    function openSectionResult(sectionId, buttonNode) {
-        const cards = document.querySelectorAll('.section-result-card');
-        const panels = document.querySelectorAll('.section-detail-panel');
-        for (const card of cards) {
-            card.classList.remove('is-active');
-        }
-        if (buttonNode) {
-            buttonNode.classList.add('is-active');
-        }
-        for (const panel of panels) {
-            panel.style.display = panel.id === sectionId ? 'block' : 'none';
-        }
-        const target = document.getElementById(sectionId);
-        if (target) {
-            target.scrollIntoView({behavior: 'smooth', block: 'nearest'});
-        }
-    }
-    document.addEventListener('DOMContentLoaded', function() {
-        const firstCard = document.querySelector('.section-result-card[data-target]');
-        if (firstCard) {
-            openSectionResult(firstCard.getAttribute('data-target'), firstCard);
-        }
-    });
-    </script>
-    """
-
     html += '<div class="section-title">Cross Sections / Sezioni Trasversali</div>'
-    html += (
-        '<div class="section-browser">'
-        '<div class="section-card-list">{0}</div>'
-        '<div class="section-detail-stack">{1}</div>'
-        '</div>'
-    ).format("".join(card_items), "".join(detail_panels))
+    html += '<div class="sections-grid">'
+    for sec in data["sections"]:
+        pts = [p for p in sec["points"] if p["elevation"] is not None]
+        if len(pts) < 2:
+            html += f'<div class="section-card"><div class="label">Sec. {sec["index"]}<br>no data</div></div>'
+            continue
+        w, h, px, py = 140, 80, 6, 6
+        offsets = [p["offset_m"] for p in pts]
+        elevs_sec = [p["elevation"] for p in pts]
+        mnX, mxX = min(offsets), max(offsets)
+        mnY, mxY = min(elevs_sec), max(elevs_sec)
+        sX = (mxX - mnX) or 1
+        sY = (mxY - mnY) or 1
+
+        def xo(o):
+            return px + (o - mnX) / sX * (w - 2 * px)
+
+        def yo(e):
+            return py + (1 - (e - mnY) / sY) * (h - 2 * py)
+
+        d_path = " ".join(
+            f"{'M' if i == 0 else 'L'}{xo(pts[i]['offset_m']):.1f},{yo(pts[i]['elevation']):.1f}"
+            for i in range(len(pts))
+        )
+        fill_d = f"{d_path} L{xo(offsets[-1]):.1f},{h - py} L{xo(offsets[0]):.1f},{h - py} Z"
+        ref_line = ""
+        if has_ref and sec.get("design_elevation") is not None:
+            try:
+                ry = yo(float(sec["design_elevation"]))
+                if py <= ry <= h - py:
+                    ref_line = (
+                        f'<line x1="{px}" y1="{ry:.1f}" x2="{w - px}" y2="{ry:.1f}"'
+                        f' stroke="#f59e0b" stroke-width="1" stroke-dasharray="3 2"/>'
+                    )
+            except Exception:
+                pass
+        html += f"""
+        <div class="section-card">
+            <svg width="{w}" height="{h}">
+                <path d="{fill_d}" fill="rgba(52,211,153,0.15)" stroke="none"/>
+                <path d="{d_path}" fill="none" stroke="#34d399" stroke-width="1.5"/>
+                {ref_line}
+            </svg>
+            <div class="label">Sec. {sec["index"]} · {sec["progressive_m"]:.0f} m<br>
+            {mnY:.1f}–{mxY:.1f} m</div>
+        </div>
+        """
+    html += "</div>"
 
     if data.get("volumes"):
         html += (
@@ -947,12 +808,10 @@ def generate_cross_sections_results_html(data):
             )
         html += "</tr></thead><tbody>"
         for v in data["volumes"]:
-            s1 = sections_by_index.get(_section_lookup_key(v.get("from_section")))
-            s2 = sections_by_index.get(_section_lookup_key(v.get("to_section")))
+            s1 = data["sections"][v["from_section"] - 1]
+            s2 = data["sections"][v["to_section"] - 1]
             grade_str = "<td>—</td>"
-            if (s1 and s2
-                    and s1["min_elevation"] is not None and s2["min_elevation"] is not None
-                    and v["distance_m"] > 0):
+            if None not in (s1["min_elevation"], s2["min_elevation"]) and v["distance_m"] > 0:
                 z1 = (s1["min_elevation"] + s1["max_elevation"]) / 2
                 z2 = (s2["min_elevation"] + s2["max_elevation"]) / 2
                 g = (z2 - z1) / v["distance_m"] * 100
@@ -961,8 +820,8 @@ def generate_cross_sections_results_html(data):
             html += (
                 f'<tr><td>{v["from_section"]}→{v["to_section"]}</td>'
                 f'<td>{v["distance_m"]:.1f}</td>{grade_str}'
-                f'<td>{((s1 or {}).get("area_m2") or 0):.2f}</td>'
-                f'<td>{((s2 or {}).get("area_m2") or 0):.2f}</td>'
+                f'<td>{s1.get("area_m2", 0):.2f}</td>'
+                f'<td>{s2.get("area_m2", 0):.2f}</td>'
                 f'<td style="font-weight:600;">{v["volume_m3"]:,.1f}</td>'
             )
             if has_ref:
@@ -983,7 +842,7 @@ def generate_cross_sections_results_html(data):
     if has_ref:
         html += "<th>Cut (m²)</th><th>Fill (m²)</th>"
     html += "</tr></thead><tbody>"
-    for s in sections:
+    for s in data["sections"]:
         mn = f"{s['min_elevation']:.2f}" if s["min_elevation"] is not None else "—"
         mx = f"{s['max_elevation']:.2f}" if s["max_elevation"] is not None else "—"
         html += (

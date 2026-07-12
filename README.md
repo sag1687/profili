@@ -2,10 +2,10 @@
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B%20%7C%204.x-589632?logo=qgis&logoColor=white)](https://qgis.org/)
 [![License](https://img.shields.io/badge/license-GPL--2.0-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.2.0-informational)](metadata.txt)
+[![Version](https://img.shields.io/badge/version-1.3.3-informational)](metadata.txt)
 
-Plugin QGIS per profili altimetrici, sezioni trasversali con volumi di sterro/riporto, download raster DTM italiani e ricerca confini comunali.
-QGIS plugin for elevation profiles, cross sections with cut/fill volumes, Italian DTM raster download and Italian municipality boundary search.
+Plugin QGIS per profili altimetrici, sezioni trasversali con volumi di sterro/riporto, download raster DTM italiani, ricerca confini comunali e confronto prima/dopo lavori (GeoPackage e differenza DTM).
+QGIS plugin for elevation profiles, cross sections with cut/fill volumes, Italian DTM raster download, Italian municipality boundary search and before/after works comparison (GeoPackage and DTM difference).
 
 **🇮🇹 [Italiano](#italiano) &nbsp;·&nbsp; 🇬🇧 [English](#english)**
 
@@ -34,7 +34,8 @@ Plugin QGIS bilingue (italiano/inglese) per:
 - stimare sterri, riporti e volumi;
 - scaricare o ritagliare raster da area disegnata (dataset italiani);
 - cercare e caricare rapidamente i confini comunali italiani;
-- esportare risultati in `PNG`, `PDF`, `CSV`, `GPKG` e layout QGIS.
+- confrontare lo stato prima/dopo i lavori (GeoPackage generati dal plugin e differenza DTM);
+- esportare risultati in `PNG`, `PDF`, `CSV`, `GPKG` e layout QGIS con legenda, reticolo, scala e cartiglio.
 
 Il plugin ha interfaccia bilingue italiano/inglese (pulsante `IT`/`EN` in alto a destra) e funziona con `QGIS 3.16+` fino a `QGIS 4.x`.
 
@@ -50,9 +51,9 @@ Il plugin ha interfaccia bilingue italiano/inglese (pulsante `IT`/`EN` in alto a
 - [Uso del tab Sezioni](#uso-del-tab-sezioni)
 - [Uso del tab Comuni](#uso-del-tab-comuni)
 - [Uso del tab Download Raster](#uso-del-tab-download-raster)
+- [Uso del tab Confronto](#uso-del-tab-confronto)
 - [Uso del tab Parametri](#uso-del-tab-parametri)
 - [Output generati](#output-generati)
-- [Note sulla lingua inglese](#note-sulla-lingua-inglese)
 - [Consigli operativi](#consigli-operativi)
 - [Troubleshooting](#troubleshooting)
 - [Struttura del progetto](#struttura-del-progetto)
@@ -88,9 +89,7 @@ Il flusso tipico è:
 - impostazione di semi-ampiezza e numero campioni per sezione;
 - confronto con quota/profilo di progetto;
 - calcolo aree di sezione, sterro, riporto e volumi tra sezioni;
-- layer dedicati per sezioni, etichette, centri, punti, curve, tratte volume e disegni tecnici;
-- popup informativo su selezione delle sezioni, con grafico e attributi;
-- raster interpolato del corridoio interessato dal tracciato.
+- layer dedicati per sezioni, centri, punti, curve, tratte volume, disegni tecnici e poligoni sterro/riporto.
 
 ### Download raster da area
 
@@ -106,13 +105,22 @@ Il flusso tipico è:
 - possibilità di usare il comune come area di ritaglio;
 - collegamento alla fonte ufficiale ISTAT per i confini amministrativi.
 
+### Confronto prima/dopo lavori
+
+- confronto tra due GeoPackage generati dal plugin sulla stessa area (rilievo prima dei lavori vs dopo);
+- variazioni di quota lungo il profilo con grafico delta (Δ media, min, max, RMS);
+- confronto sezione per sezione (accoppiamento per progressiva con tolleranza regolabile);
+- bilancio sterri/riporti prima vs dopo;
+- confronto DTM: raster differenza (dopo - prima) con statistiche, volumi di scavo/riporto sopra soglia e stile divergente automatico (rosso = abbassamento, blu = innalzamento);
+- calcolo deterministico GDAL/NumPy, senza AI.
+
 ### Export
 
 - `PNG` del grafico;
-- `PDF` del layout;
+- `PDF` del layout cartografico multi-foglio;
 - `CSV` dei risultati;
 - `GPKG` con i layer vettoriali generati;
-- apertura di un layout QGIS per la stampa.
+- apertura di un layout QGIS per la stampa con legenda per tipologia (ogni voce una sola volta), reticolo con coordinate, barra di scala, cartiglio con titolo/autore/data/CRS/scala e grafici in miniatura, più un foglio dedicato per ogni grafico con la relativa tabella attributi.
 
 ## Requisiti
 
@@ -160,6 +168,7 @@ Il plugin espone i seguenti tab:
 | `Sezioni` | Calcolo sezioni, aree e volumi |
 | `Comuni` | Ricerca e caricamento confini comunali |
 | `Download Raster` | Ritaglio/scarico raster da area |
+| `Confronto` | Confronto prima/dopo lavori (GeoPackage e DTM) |
 | `Parametri` | Etichette report e punto di inserimento |
 | `Risultati` | Anteprima grafici e tabelle |
 | `Help` | Aiuto sintetico integrato |
@@ -307,7 +316,6 @@ Il plugin costruisce i seguenti layer vettoriali:
 - asse;
 - sezioni planimetriche;
 - punti sezione;
-- etichette sezione;
 - centri sezione;
 - curve;
 - tratte volumi;
@@ -319,7 +327,6 @@ Genera inoltre:
 - grafico delle sezioni;
 - tabella volumi;
 - tabella di dettaglio sezione;
-- raster interpolato del corridoio con simbologia tematica;
 - `GPKG` automatico;
 - layout di stampa esportabile.
 
@@ -361,7 +368,7 @@ Il confine caricato con Nominatim/OpenStreetMap è utile per ricerca rapida. Per
 | `TINITALY 1.1` | download area da ZIP ufficiali e WCS opzionale |
 | `HR-DTM-5m` | ritaglio remoto da dataset pubblicato su Zenodo |
 
-Entrambe le sorgenti coprono **solo il territorio italiano**. Vedi [Note sulla lingua inglese](#note-sulla-lingua-inglese).
+Entrambe le sorgenti coprono **solo il territorio italiano**.
 
 ### Procedura
 
@@ -389,6 +396,34 @@ Entrambe le sorgenti coprono **solo il territorio italiano**. Vedi [Note sulla l
 
 - `Apri fonte`: apre la pagina web della sorgente dati;
 - `Carica WCS TINITALY`: aggiunge in QGIS il WCS TINITALY, se disponibile.
+
+## Uso del tab Confronto
+
+Il tab `Confronto` serve a confrontare la stessa area **prima e dopo i lavori**, senza AI: tutto il calcolo è matematica deterministica GDAL/NumPy.
+
+### Confronto GeoPackage
+
+1. genera (in momenti diversi) i GeoPackage con il plugin: rilievo prima dei lavori e rilievo dopo i lavori;
+2. apri il tab `Confronto`: i `GPKG` della cartella di output sono elencati automaticamente (`Aggiorna elenco` per ricaricarli, `...` per file esterni);
+3. scegli il `GPKG prima` e il `GPKG dopo`;
+4. imposta la `Tolleranza (m)` per l'accoppiamento delle sezioni per progressiva;
+5. clicca `Confronta GeoPackage`.
+
+Il report nel tab `Risultati` mostra:
+
+- variazioni di quota lungo il profilo con grafico delta (Δ media, min, max, RMS);
+- confronto sezione per sezione (Δ quota min, Δ area, Δ sterro, Δ riporto);
+- bilancio sterri/riporti prima vs dopo.
+
+### Confronto DTM
+
+1. seleziona `DTM prima` e `DTM dopo` (layer del progetto o file `GeoTIFF`);
+2. imposta la `Soglia Δ (m)` sotto la quale le variazioni sono considerate rumore;
+3. clicca `Confronta DTM`.
+
+Il plugin allinea automaticamente le griglie (anche con CRS o risoluzioni diverse), scrive il raster differenza `dopo - prima` in `GeoTIFF` e lo carica con scala di colori divergente: **rosso = abbassamento (scavo), blu = innalzamento (riporto)**. Il report include Δ quota media/min/max, RMS, volumi e aree di scavo/riporto sopra soglia e bilancio netto.
+
+**Nota:** per volumi accurati usa DTM in CRS metrico (es. UTM); con CRS geografici i valori sono approssimati e segnalati come tali.
 
 ## Uso del tab Parametri
 
@@ -441,7 +476,7 @@ Altrimenti usa una cartella nella home utente.
 | `PDF` | layout stampabile |
 | `CSV` | campioni profilo oppure sezioni/volumi |
 | `GPKG` | layer vettoriali prodotti dal calcolo |
-| `GeoTIFF` | raster area ritagliata |
+| `GeoTIFF` | raster area ritagliata oppure raster differenza DTM (`dtm_diff_*.tif`) |
 
 ### Layer prodotti nel profilo
 
@@ -452,7 +487,6 @@ Altrimenti usa una cartella nella home utente.
 ### Layer prodotti nelle sezioni
 
 - asse;
-- etichette sezione;
 - curve;
 - sezioni planimetriche;
 - punti sezione;
@@ -461,17 +495,15 @@ Altrimenti usa una cartella nella home utente.
 - disegni tecnici;
 - poligoni sterro/riporto.
 
-### Tabelle attributi bilingue
+### Layout di stampa
 
-I nomi tecnici dei campi restano fissi (per compatibilità con espressioni, stili ed export), ma **l'alias visualizzato** in tabella attributi ("QGIS Fields" / etichetta mostrata nella tabella) segue automaticamente la lingua scelta nel plugin (`IT`/`EN`) al momento della generazione del layer. Cambiando lingua e rilanciando un calcolo, i nuovi layer avranno alias nella lingua corrente.
+`Esporta PDF` e `Stampa Layout` producono un layout cartografico A3 con:
 
-### Interazione in mappa
-
-Se selezioni una feature appartenente ai layer di sezione, il plugin apre un popup con:
-
-- grafico associato;
-- riepilogo tecnico della sezione;
-- attributi della feature cliccata.
+- mappa con **reticolo** di coordinate e cornice zebra;
+- **barra di scala**;
+- **legenda per tipologia**: ogni tipo di layer compare una sola volta;
+- **cartiglio** con titolo, autore, data, CRS, scala e grafici in miniatura;
+- **un foglio per ogni grafico** (profilo e/o sezioni) con la relativa tabella attributi.
 
 ### Raggruppamento in QGIS
 
@@ -479,13 +511,8 @@ I layer vengono aggiunti in gruppi dedicati nel pannello layer, separati per:
 
 - profilo;
 - sezioni e volumi;
-- raster scaricati.
-
-## Note sulla lingua inglese
-
-TINITALY 1.1 e HR-DTM-5m sono dataset che coprono **esclusivamente il territorio italiano**. Per evitare download inutili o fuorvianti quando l'interfaccia è in inglese, il tab `Download Raster` viene **disattivato automaticamente** con un messaggio esplicativo se selezioni `EN`. Per usarlo, torna alla lingua italiana con il pulsante in alto a destra.
-
-Tutte le altre funzioni (profili, sezioni/volumi, ricerca comuni) restano pienamente disponibili in entrambe le lingue, incluse le fonti altimetriche globali (`Open-Elevation`, `OpenTopoData`) e i raster locali.
+- raster scaricati;
+- confronto DTM.
 
 ## Consigli operativi
 
@@ -500,7 +527,7 @@ Tutte le altre funzioni (profili, sezioni/volumi, ricerca comuni) restano pienam
 Quando il plugin lavora con `Layer Raster (DEM/DTM locale)`, le quote del profilo e delle sezioni vengono lette realmente dal dato raster selezionato. Questo significa che:
 
 - la qualità delle misure dipende anche dal `CRS` del progetto e del raster;
-- un `CRS geografico` non è la scelta corretta per elaborati metrici, disegni tecnici e raster interpolati del corridoio;
+- un `CRS geografico` non è la scelta corretta per elaborati metrici, disegni tecnici e confronti volumetrici DTM;
 - per distanze, aree, sezioni e volumi è fortemente consigliato usare un `CRS proiettato metrico` coerente con il territorio di lavoro;
 - se il `CRS` del progetto e quello del `DEM` sono diversi, il plugin riproietta i punti per leggere le quote, ma resta comunque buona pratica lavorare in un contesto CRS coerente.
 
@@ -547,9 +574,9 @@ Controlla che:
 
 Se stai usando API globali, il dato può essere troppo grossolano per uso topografico. Passa a un `DEM/DTM` locale.
 
-### Il tab Download Raster è disabilitato
+### Il confronto GeoPackage non trova dati confrontabili
 
-È il comportamento atteso quando la lingua del plugin è impostata su `EN`: TINITALY e HR-DTM-5m coprono solo l'Italia. Passa a `IT` per riattivarlo.
+Il confronto funziona con i `GPKG` generati da questo plugin (campioni profilo, picchetti, centri sezione, tratte volumi). Verifica di aver selezionato due pacchetti prodotti dal plugin e che la tolleranza copra lo scostamento tra le progressive.
 
 ### Il download raster fallisce
 
@@ -575,6 +602,7 @@ Il plugin usa `QtWebEngine` per un rendering ricco (grafico, accordion). Se il t
 | `core_sections.py` | sezioni, volumi e disegni tecnici |
 | `core_comuni.py` | ricerca comuni e confini |
 | `core_raster_download.py` | download e ritaglio raster |
+| `core_confronto.py` | confronto prima/dopo lavori (GeoPackage e DTM) |
 | `qt_compat.py` | compatibilità PyQt5/PyQt6 |
 | `metadata.txt` | metadati plugin QGIS |
 | `icon.svg` | icona del plugin |
@@ -609,7 +637,8 @@ QGIS bilingual plugin (Italian/English) to:
 - estimate cut, fill and earthwork volumes;
 - download or clip rasters from a drawn area (Italian datasets);
 - quickly search and load Italian municipality boundaries;
-- export results as `PNG`, `PDF`, `CSV`, `GPKG` and a QGIS print layout.
+- compare the before/after works state (plugin-generated GeoPackages and DTM difference);
+- export results as `PNG`, `PDF`, `CSV`, `GPKG` and a QGIS print layout with legend, grid, scale bar and title block.
 
 The plugin has a bilingual Italian/English interface (`IT`/`EN` button, top right) and works with `QGIS 3.16+` up to `QGIS 4.x`.
 
@@ -625,9 +654,9 @@ The plugin has a bilingual Italian/English interface (`IT`/`EN` button, top righ
 - [Using the Sections tab](#using-the-sections-tab)
 - [Using the Municipalities tab](#using-the-municipalities-tab)
 - [Using the Raster Download tab](#using-the-raster-download-tab)
+- [Using the Comparison tab](#using-the-comparison-tab)
 - [Using the Parameters tab](#using-the-parameters-tab)
 - [Generated output](#generated-output)
-- [A note on the English interface](#a-note-on-the-english-interface)
 - [Operational tips](#operational-tips)
 - [Troubleshooting-en](#troubleshooting-en)
 - [Project structure](#project-structure)
@@ -663,9 +692,7 @@ Typical workflow:
 - configurable half-width and samples per section;
 - comparison against a design elevation/profile;
 - section area, cut, fill and inter-section volume calculation;
-- dedicated layers for sections, labels, centers, points, curves, volume segments and technical drawings;
-- informational popup on section selection, with chart and attributes;
-- interpolated raster of the corridor covered by the alignment.
+- dedicated layers for sections, centers, points, curves, volume segments, technical drawings and cut/fill polygons.
 
 ### Area raster download
 
@@ -681,13 +708,22 @@ Typical workflow:
 - option to use the municipality as a clip area;
 - link to the official ISTAT source for administrative boundaries.
 
+### Before/after works comparison
+
+- comparison between two plugin-generated GeoPackages over the same area (survey before vs after the works);
+- elevation changes along the profile with a delta chart (mean, min, max, RMS Δ);
+- section-by-section comparison (chainage pairing with adjustable tolerance);
+- cut/fill balance before vs after;
+- DTM comparison: difference raster (after - before) with statistics, above-threshold cut/fill volumes and automatic diverging style (red = lowering, blue = raising);
+- deterministic GDAL/NumPy computation, no AI.
+
 ### Export
 
 - `PNG` of the chart;
-- `PDF` of the layout;
+- `PDF` of the multi-sheet cartographic layout;
 - `CSV` of the results;
 - `GPKG` with the generated vector layers;
-- opens a QGIS print layout.
+- opens a QGIS print layout with a per-typology legend (each entry once), coordinate grid, scale bar, title block with title/author/date/CRS/scale and chart thumbnails, plus one dedicated sheet per chart with its attribute table.
 
 ## Requirements
 
@@ -735,6 +771,7 @@ The plugin exposes the following tabs:
 | `Sections` | Section, area and volume calculation |
 | `Municipalities` | Municipality boundary search and loading |
 | `Raster Download` | Raster clipping/download from an area |
+| `Comparison` | Before/after works comparison (GeoPackage and DTM) |
 | `Parameters` | Report labels and insertion point |
 | `Results` | Chart and table preview |
 | `Help` | Built-in quick help |
@@ -882,7 +919,6 @@ The plugin builds the following vector layers:
 - axis;
 - planimetric sections;
 - section points;
-- section labels;
 - section centers;
 - curves;
 - volume segments;
@@ -894,7 +930,6 @@ It also generates:
 - section chart;
 - volumes table;
 - section detail table;
-- interpolated corridor raster with thematic symbology;
 - automatic `GPKG`;
 - exportable print layout.
 
@@ -936,7 +971,7 @@ The boundary loaded via Nominatim/OpenStreetMap is convenient for quick lookups.
 | `TINITALY 1.1` | area download from official ZIP tiles, optional WCS |
 | `HR-DTM-5m` | remote clipping from the dataset published on Zenodo |
 
-Both sources cover **Italian territory only**. See [A note on the English interface](#a-note-on-the-english-interface).
+Both sources cover **Italian territory only**.
 
 ### Procedure
 
@@ -964,6 +999,34 @@ Both sources cover **Italian territory only**. See [A note on the English interf
 
 - `Open source`: opens the data source web page;
 - `Load TINITALY WCS`: adds the TINITALY WCS to QGIS, if available.
+
+## Using the Comparison tab
+
+The `Comparison` tab compares the same area **before and after the works**, without AI: everything is deterministic GDAL/NumPy math.
+
+### GeoPackage comparison
+
+1. generate (at different times) the GeoPackages with the plugin: survey before the works and survey after the works;
+2. open the `Comparison` tab: the `GPKG` files in the output folder are listed automatically (`Refresh list` to reload them, `...` for external files);
+3. choose the `GPKG before` and the `GPKG after`;
+4. set the `Tolerance (m)` used to pair sections by chainage;
+5. click `Compare GeoPackages`.
+
+The report in the `Results` tab shows:
+
+- elevation changes along the profile with a delta chart (mean, min, max, RMS Δ);
+- section-by-section comparison (Δ min elevation, Δ area, Δ cut, Δ fill);
+- cut/fill balance before vs after.
+
+### DTM comparison
+
+1. select `DTM before` and `DTM after` (project layers or `GeoTIFF` files);
+2. set the `Δ threshold (m)` below which changes are treated as noise;
+3. click `Compare DTMs`.
+
+The plugin automatically aligns the grids (even with different CRS or resolutions), writes the `after - before` difference raster as `GeoTIFF` and loads it with a diverging color ramp: **red = lowering (cut), blue = raising (fill)**. The report includes mean/min/max Δ elevation, RMS, above-threshold cut/fill volumes and areas, and the net balance.
+
+**Note:** for accurate volumes use DTMs in a metric CRS (e.g. UTM); with geographic CRS the figures are approximate and flagged as such.
 
 ## Using the Parameters tab
 
@@ -1016,7 +1079,7 @@ Otherwise it uses a folder under the user home directory.
 | `PDF` | printable layout |
 | `CSV` | profile samples or sections/volumes |
 | `GPKG` | vector layers produced by the calculation |
-| `GeoTIFF` | clipped area raster |
+| `GeoTIFF` | clipped area raster or DTM difference raster (`dtm_diff_*.tif`) |
 
 ### Layers produced for the profile
 
@@ -1027,7 +1090,6 @@ Otherwise it uses a folder under the user home directory.
 ### Layers produced for sections
 
 - axis;
-- section labels;
 - curves;
 - planimetric sections;
 - section points;
@@ -1036,17 +1098,15 @@ Otherwise it uses a folder under the user home directory.
 - technical drawings;
 - cut/fill polygons.
 
-### Bilingual attribute tables
+### Print layout
 
-The underlying (technical) field names stay fixed, for compatibility with expressions, styling and export. However the **display alias** shown in the QGIS attribute table automatically follows the language selected in the plugin (`IT`/`EN`) at the time the layer is generated. Switching language and re-running a calculation produces new layers with aliases in the current language.
+`Export PDF` and `Print Layout` produce an A3 cartographic layout with:
 
-### Map interaction
-
-Selecting a feature belonging to a section layer opens a popup with:
-
-- the associated chart;
-- a technical summary of the section;
-- the attributes of the clicked feature.
+- map with a coordinate **grid** and zebra frame;
+- **scale bar**;
+- **per-typology legend**: each layer type appears only once;
+- **title block** with title, author, date, CRS, scale and chart thumbnails;
+- **one sheet per chart** (profile and/or sections) with its attribute table.
 
 ### Grouping in QGIS
 
@@ -1054,13 +1114,8 @@ Layers are added to dedicated groups in the layers panel, separated by:
 
 - profile;
 - sections and volumes;
-- downloaded rasters.
-
-## A note on the English interface
-
-TINITALY 1.1 and HR-DTM-5m are datasets covering **Italian territory exclusively**. To avoid useless or misleading downloads when the interface is in English, the `Raster Download` tab is **automatically disabled**, with an explanatory message, when you select `EN`. Switch back to Italian (top-right button) to use it.
-
-All other features (profiles, sections/volumes, municipality search) remain fully available in both languages, including the global elevation sources (`Open-Elevation`, `OpenTopoData`) and local rasters.
+- downloaded rasters;
+- DTM comparison.
 
 ## Operational tips
 
@@ -1075,7 +1130,7 @@ All other features (profiles, sections/volumes, municipality search) remain full
 When the plugin works with `Raster Layer (local DEM/DTM)`, profile and section elevations are actually read from the selected raster data. This means:
 
 - measurement quality also depends on the `CRS` of the project and of the raster;
-- a `geographic CRS` is not the right choice for metric outputs, technical drawings and interpolated corridor rasters;
+- a `geographic CRS` is not the right choice for metric outputs, technical drawings and DTM volume comparisons;
 - for distances, areas, sections and volumes, a `projected metric CRS` consistent with the working territory is strongly recommended;
 - if the project `CRS` and the `DEM` CRS differ, the plugin reprojects the points to read elevations, but working in a consistent CRS context remains good practice.
 
@@ -1122,9 +1177,9 @@ Check that:
 
 If you're using global APIs, the data may be too coarse for topographic use. Switch to a local `DEM/DTM`.
 
-### The Raster Download tab is disabled
+### The GeoPackage comparison finds no comparable data
 
-This is expected behavior when the plugin language is set to `EN`: TINITALY and HR-DTM-5m cover Italy only. Switch to `IT` to re-enable it.
+The comparison works with `GPKG` files generated by this plugin (profile samples, pickets, section centers, volume segments). Check that you selected two plugin-generated packages and that the tolerance covers the chainage offset.
 
 ### The raster download fails
 
@@ -1150,6 +1205,7 @@ The plugin uses `QtWebEngine` for rich rendering (chart, accordion). If your QGI
 | `core_sections.py` | sections, volumes and technical drawings |
 | `core_comuni.py` | municipality search and boundaries |
 | `core_raster_download.py` | raster download and clipping |
+| `core_confronto.py` | before/after works comparison (GeoPackage and DTM) |
 | `qt_compat.py` | PyQt5/PyQt6 compatibility |
 | `metadata.txt` | QGIS plugin metadata |
 | `icon.svg` | plugin icon |

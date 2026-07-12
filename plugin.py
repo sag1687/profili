@@ -20,24 +20,9 @@ plugin.py — Entry point for the Profili, Sezioni e Comuni QGIS plugin.
 
 import os
 import csv
-import html
-import math
-import re
-import textwrap
 import datetime
-import shutil
-import tempfile
 
-from qgis.PyQt.QtWidgets import (
-    QAction,
-    QApplication,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QMessageBox,
-    QTextBrowser,
-    QVBoxLayout,
-)
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QApplication
 from qgis.PyQt.QtGui import QDesktopServices, QIcon
 from qgis.PyQt.QtCore import QUrl
 from qgis.core import Qgis, QgsProject, QgsPointXY
@@ -61,7 +46,11 @@ from .core_sections import (
     calculate_cross_sections, generate_cross_sections_svg,
     generate_cross_sections_results_html,
 )
-from .qt_compat import compat_enum
+from .core_confronto import (
+    compare_dtm_rasters, compare_gpkg_summaries, generate_compare_html,
+    generate_delta_svg, generate_dtm_compare_html, list_output_gpkgs,
+    read_gpkg_summary,
+)
 
 
 class ProfiliSezioniComuniPlugin:
@@ -77,17 +66,15 @@ class ProfiliSezioniComuniPlugin:
         self.last_points_data = None
         self.last_total_dist = None
         self.last_svg_content = None
+        self.last_profile_svg = None
+        self.last_sections_svg = None
         self.last_results_html = None
         self.last_cross_sections_data = None
         self.last_vector_layers = []
         self.last_vector_gpkg = None
         self.last_chart_png_path = None
-        self.last_interpolated_raster_path = None
-        self.last_report_context = {}
         self.current_mode = "profile"   # "profile" | "sections"
         self._last_drawn_points = None
-        self._popup_connected_layer_ids = set()
-        self._active_section_popup = None
 
     # ──────────────────────────────────────────────────────────────
     # initGui / unload
@@ -142,82 +129,19 @@ class ProfiliSezioniComuniPlugin:
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         return os.path.join(self._default_output_dir(), f"{prefix}_{stamp}.gpkg")
 
-    def _new_output_raster_path(self, prefix):
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return os.path.join(self._default_output_dir(), f"{prefix}_{stamp}.tif")
-
-    def _group_sort_key(self, name):
-        text = str(name or "")
-        match = re.match(r"^\s*(\d+)\s+", text)
-        if match:
-            return 0, int(match.group(1)), text.lower()
-        return 1, text.lower()
-
-    def _move_group_to_index(self, parent_group, group, index):
-        if not parent_group or not group:
-            return group
-        try:
-            children = list(parent_group.children())
-            current_index = children.index(group)
-        except Exception:
-            return group
-        if current_index == index:
-            return group
-        try:
-            clone = group.clone()
-            expanded = group.isExpanded() if hasattr(group, "isExpanded") else True
-            parent_group.insertChildNode(index, clone)
-            if hasattr(clone, "setExpanded"):
-                clone.setExpanded(expanded)
-            parent_group.removeChildNode(group)
-            return clone
-        except Exception:
-            return group
-
     def _output_root_group(self):
         root = QgsProject.instance().layerTreeRoot()
         group_name = "Profili, Sezioni e Comuni"
         group = root.findGroup(group_name)
-        if group is None:
-            insert_group = getattr(root, "insertGroup", None)
-            if insert_group:
-                group = insert_group(0, group_name)
-            else:
-                group = root.addGroup(group_name)
-        return self._move_group_to_index(root, group, 0)
+        return group or root.addGroup(group_name)
 
-    def _new_output_group(self, title, priority="vector"):
+    def _new_output_group(self, title):
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        parent = self._output_root_group()
-        name = f"{title} - {stamp}"
-        insert_group = getattr(parent, "insertGroup", None)
-        if priority == "raster":
-            if insert_group:
-                return insert_group(len(parent.children()), name)
-            return parent.addGroup(name)
-        if insert_group:
-            return insert_group(0, name)
-        group = parent.addGroup(name)
-        return self._move_group_to_index(parent, group, 0)
+        return self._output_root_group().addGroup(f"{title} - {stamp}")
 
     def _ensure_subgroup(self, parent_group, name):
         group = parent_group.findGroup(name) if parent_group else None
-        if not parent_group:
-            return None
-        desired_key = self._group_sort_key(name)
-        desired_index = len(parent_group.children())
-        for idx, child in enumerate(parent_group.children()):
-            child_name = child.name() if hasattr(child, "name") else ""
-            if self._group_sort_key(child_name) > desired_key:
-                desired_index = idx
-                break
-        if group is not None:
-            return self._move_group_to_index(parent_group, group, desired_index)
-        insert_group = getattr(parent_group, "insertGroup", None)
-        if insert_group:
-            return insert_group(desired_index, name)
-        group = parent_group.addGroup(name)
-        return self._move_group_to_index(parent_group, group, desired_index)
+        return group or parent_group.addGroup(name)
 
     def _add_output_layer(self, layer, parent_group, subgroup_name=None):
         if not layer or not layer.isValid():
@@ -287,950 +211,38 @@ class ProfiliSezioniComuniPlugin:
             'height:auto;border:1px solid #2d3757;border-radius:6px;background:#12151e;">'
         ).format(url)
 
-    def _persist_svg_chart(self, svg_content, name):
-        if not svg_content:
-            return None
-        chart_dir = os.path.join(self._default_output_dir(), "_charts")
-        os.makedirs(chart_dir, exist_ok=True)
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        path = os.path.join(chart_dir, f"{name}_{stamp}.svg")
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(svg_content)
-            return path
-        except Exception:
-            return None
-
-    def _format_crs_name(self, crs):
-        if not crs:
-            return "n/d"
-        try:
-            auth = crs.authid() or ""
-            desc = crs.description() or ""
-            if auth and desc and auth != desc:
-                return f"{auth} ({desc})"
-            return auth or desc or "n/d"
-        except Exception:
-            return "n/d"
-
-    def _build_measurement_context(self, source_label="", raster_layer=None, vector_layers=None):
-        project = QgsProject.instance()
-        project_crs = project.crs()
-        raster_crs = raster_layer.crs() if raster_layer else None
-
-        notes = []
-        severity = "ok"
-        if not project_crs or not project_crs.isValid():
-            notes.append(
-                "CRS progetto non valido: verificare il sistema di riferimento prima di usare distanze, aree o volumi."
-            )
-            severity = "warn"
-        elif project_crs.isGeographic():
-            notes.append(
-                "CRS progetto geografico: per misure affidabili da file usare un CRS proiettato metrico."
-            )
-            severity = "warn"
-        else:
-            notes.append(
-                "CRS progetto proiettato: condizione consigliata per misure tecniche e disegni derivati dal file."
-            )
-
-        if raster_layer and raster_crs and raster_crs.isValid():
-            if raster_crs.isGeographic():
-                notes.append(
-                    "Il DEM usa un CRS geografico: il campionamento quota e il raster interpolato del corridoio sono meno robusti."
-                )
-                severity = "warn"
-            elif project_crs.isValid() and project_crs != raster_crs:
-                notes.append(
-                    "Il tracciato viene riproiettato nel CRS del DEM per leggere le quote."
-                )
-        elif source_label:
-            notes.append(
-                f"Sorgente quote attiva: {source_label}."
-            )
-
-        layer_lines = []
-        context_layers = vector_layers if vector_layers is not None else self.last_vector_layers
-        for idx, layer in enumerate(context_layers, 1):
-            if not layer or not layer.isValid():
-                continue
-            geom_label = ""
-            try:
-                geom_type = layer.geometryType()
-                geom_label = {
-                    0: "point",
-                    1: "line",
-                    2: "polygon",
-                }.get(geom_type, "vector")
-            except Exception:
-                geom_label = "vector"
-            layer_lines.append(f"{idx:02d}. {layer.name()} [{geom_label}]")
-        if self.last_interpolated_raster_path:
-            layer_lines.append("R. Raster corridoio interpolato [raster]")
-        if raster_layer and raster_layer.isValid():
-            layer_lines.append(f"D. DEM sorgente: {raster_layer.name()} [raster]")
-
-        tone_class = "crs-ok" if severity == "ok" else "crs-warn"
-        html_lines = "".join(f"<li>{html.escape(line)}</li>" for line in notes)
-        layer_html = "".join(f"<li>{html.escape(line)}</li>" for line in layer_lines) or "<li>Nessun layer registrato.</li>"
-        html_block = (
-            f"<div class='summary-card {tone_class}'>"
-            f"<strong>CRS e affidabilità misure / CRS and measurement reliability</strong><br>"
-            f"CRS progetto: <strong>{html.escape(self._format_crs_name(project_crs))}</strong><br>"
-            f"CRS dato quote: <strong>{html.escape(self._format_crs_name(raster_crs) if raster_crs else source_label or 'n/d')}</strong>"
-            f"<ul class='report-list'>{html_lines}</ul>"
-            f"</div>"
-            f"<div class='summary-card'>"
-            f"<strong>Layer generati / Generated layers</strong>"
-            f"<ul class='report-list'>{layer_html}</ul>"
-            f"</div>"
-        )
-        return {
-            "html": html_block,
-            "severity": severity,
-            "project_crs": self._format_crs_name(project_crs),
-            "data_crs": self._format_crs_name(raster_crs) if raster_crs else (source_label or "n/d"),
-            "notes": notes,
-            "layers": layer_lines,
-            "source_label": source_label or "n/d",
-        }
-
-    def _section_detail_svg(self, sec, width=640, height=230):
-        pts = [p for p in (sec.get("points") or []) if p.get("elevation") is not None]
-        if len(pts) < 2:
-            return "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='230'><text x='16' y='30' fill='#8ba3c7'>No data</text></svg>"
-
-        pad_x, pad_y = 24, 20
-        plot_w = width - pad_x * 2
-        plot_h = height - 58
-        offsets = [float(p.get("offset_m") or 0.0) for p in pts]
-        elevations = [float(p.get("elevation") or 0.0) for p in pts]
-        design = sec.get("design_elevation")
-        if design is not None:
-            elevations.append(float(design))
-        min_x, max_x = min(offsets), max(offsets)
-        min_y, max_y = min(elevations), max(elevations)
-        span_x = max(max_x - min_x, 1.0)
-        span_y = max(max_y - min_y, 1.0)
-
-        def sx(value):
-            return pad_x + ((float(value) - min_x) / span_x) * plot_w
-
-        def sy(value):
-            return pad_y + plot_h - ((float(value) - min_y) / span_y) * plot_h
-
-        d_path = " ".join(
-            f"{'M' if i == 0 else 'L'}{sx(p.get('offset_m')):.1f},{sy(p.get('elevation')):.1f}"
-            for i, p in enumerate(pts)
-        )
-        fill_d = f"{d_path} L{sx(offsets[-1]):.1f},{pad_y + plot_h:.1f} L{sx(offsets[0]):.1f},{pad_y + plot_h:.1f} Z"
-        design_line = ""
-        if design is not None:
-            y = sy(design)
-            design_line = (
-                f"<line x1='{pad_x:.1f}' y1='{y:.1f}' x2='{pad_x + plot_w:.1f}' y2='{y:.1f}' "
-                f"stroke='#f59e0b' stroke-width='2' stroke-dasharray='6 4'/>"
-            )
-        title = "Sezione {0:02d} · Prog. {1:.1f} m".format(
-            int(sec.get("index") or 0),
-            float(sec.get("progressive_m") or 0.0),
-        )
-        return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-<rect width="100%" height="100%" rx="10" ry="10" fill="#0e1118" stroke="#2d3757"/>
-<text x="20" y="24" fill="#f8fafc" font-size="15" font-family="Arial" font-weight="700">{html.escape(title)}</text>
-<path d="{fill_d}" fill="rgba(52,211,153,0.14)" stroke="none"/>
-<path d="{d_path}" fill="none" stroke="#34d399" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
-{design_line}
-<text x="20" y="{height - 16}" fill="#8ba3c7" font-size="12" font-family="Arial">Offset {min_x:.1f} m / {max_x:.1f} m</text>
-<text x="{width - 20}" y="{height - 16}" fill="#8ba3c7" font-size="12" font-family="Arial" text-anchor="end">Quote {min_y:.2f} - {max_y:.2f} m</text>
-</svg>"""
-
-    def _nice_layout_interval(self, span, geographic=False):
-        if geographic:
-            candidates = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
-            target = max(float(span or 0.0) / 4.5, candidates[0])
-            for value in candidates:
-                if value >= target:
-                    return value
-            return candidates[-1]
-        span = max(float(span or 0.0), 1.0)
-        raw = span / 4.5
-        mag = 10 ** math.floor(math.log10(raw))
-        for factor in (1, 2, 5, 10):
-            value = factor * mag
-            if value >= raw:
-                return value
-        return 10 * mag
-
-    def _format_layout_coord(self, value, geographic=False):
-        decimals = 6 if geographic else 2
-        return f"{float(value):.{decimals}f}"
-
-    def _persist_north_arrow_svg(self):
-        path = os.path.join(self._default_output_dir(), "_charts", "north_arrow.svg")
-        if os.path.exists(path):
-            return path
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        svg = """<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="180" viewBox="0 0 120 180">
-  <defs>
-    <linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0%" stop-color="#f8fafc"/>
-      <stop offset="100%" stop-color="#94a3b8"/>
-    </linearGradient>
-  </defs>
-  <rect x="18" y="18" width="84" height="144" rx="18" ry="18" fill="#0f172a" stroke="#334155" stroke-width="4"/>
-  <path d="M60 26 L88 108 L60 94 L32 108 Z" fill="url(#g)" stroke="#e2e8f0" stroke-width="3"/>
-  <path d="M60 150 L32 108 L60 120 L88 108 Z" fill="#1e293b" stroke="#64748b" stroke-width="3"/>
-  <text x="60" y="170" text-anchor="middle" font-family="Arial" font-size="22" font-weight="700" fill="#f8fafc">N</text>
-</svg>"""
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(svg)
-        return path
-
-    def _write_svg_asset(self, directory, name, svg_content):
-        if not directory or not svg_content:
-            return None
-        os.makedirs(directory, exist_ok=True)
-        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name or "asset")).strip("._") or "asset"
-        path = os.path.join(directory, f"{safe_name}.svg")
-        try:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(svg_content)
-            return path
-        except Exception:
-            return None
-
-    def _layout_page_size(self):
-        from qgis.core import QgsLayoutSize, QgsUnitTypes
-
-        return QgsLayoutSize(420, 297, QgsUnitTypes.LayoutMillimeters)
-
-    def _layout_ensure_page(self, layout, page_number):
-        from qgis.core import QgsLayoutItemPage
-
-        page_number = max(int(page_number or 0), 0)
-        pages = layout.pageCollection()
-        while pages.pageCount() <= page_number:
-            page = QgsLayoutItemPage(layout)
-            page.setPageSize(self._layout_page_size())
-            pages.addPage(page)
-        return pages.page(page_number)
-
-    def _layout_place_item(self, layout, item, x, y, w=None, h=None, page=0):
-        from qgis.core import QgsLayoutPoint, QgsLayoutSize, QgsUnitTypes
-
-        self._layout_ensure_page(layout, page)
-        if w is not None and h is not None:
-            item.attemptResize(QgsLayoutSize(w, h, QgsUnitTypes.LayoutMillimeters))
-        point = QgsLayoutPoint(x, y, QgsUnitTypes.LayoutMillimeters)
-        try:
-            item.attemptMove(point, page=page)
-            return item
-        except TypeError:
-            pass
-        except Exception:
-            pass
-        try:
-            page_item = layout.pageCollection().page(page)
-            origin = page_item.positionWithUnits()
-            point = QgsLayoutPoint(
-                origin.x() + x,
-                origin.y() + y,
-                QgsUnitTypes.LayoutMillimeters,
-            )
-        except Exception:
-            try:
-                spacing = float(layout.pageCollection().spaceBetweenPages() or 0.0)
-            except Exception:
-                spacing = 0.0
-            point = QgsLayoutPoint(
-                x,
-                y + page * (297.0 + spacing),
-                QgsUnitTypes.LayoutMillimeters,
-            )
-        item.attemptMove(point)
-        return item
-
-    def _layout_add_picture_box(self, layout, image_path, x, y, w, h, *,
-                                page=0, frame=True, background="#0f172a",
-                                stroke="#0f172a"):
-        from qgis.PyQt.QtGui import QColor
-        from qgis.core import QgsLayoutItemPicture
-
-        if not image_path:
-            return None
-        try:
-            item = QgsLayoutItemPicture(layout)
-            item.setPicturePath(image_path)
-            item.setResizeMode(compat_enum(QgsLayoutItemPicture, "Zoom", "ResizeMode"))
-            item.setFrameEnabled(bool(frame))
-            try:
-                if background is not None:
-                    item.setBackgroundColor(QColor(background))
-                if stroke is not None:
-                    item.setFrameStrokeColor(QColor(stroke))
-            except Exception:
-                pass
-            layout.addLayoutItem(item)
-            self._layout_place_item(layout, item, x, y, w, h, page=page)
-            return item
-        except Exception:
-            return None
-
-    def _layout_add_north_arrow(self, layout, x, y, w=18, h=32, *, page=0):
-        from qgis.core import QgsLayoutItemPicture
-
-        try:
-            arrow_path = self._persist_north_arrow_svg()
-            item = QgsLayoutItemPicture(layout)
-            item.setPicturePath(arrow_path)
-            item.setResizeMode(compat_enum(QgsLayoutItemPicture, "Zoom", "ResizeMode"))
-            item.setFrameEnabled(False)
-            layout.addLayoutItem(item)
-            self._layout_place_item(layout, item, x, y, w, h, page=page)
-            return item
-        except Exception:
-            return None
-
-    def _layout_add_scale_bar(self, layout, map_item, x, y, w=70, h=12, *, page=0):
-        from qgis.PyQt.QtGui import QColor, QFont
-        from qgis.core import QgsLayoutItemScaleBar, QgsUnitTypes
-
-        try:
-            scalebar = QgsLayoutItemScaleBar(layout)
-            scalebar.setLinkedMap(map_item)
-            try:
-                scalebar.setStyle("Single Box")
-            except Exception:
-                pass
-            project_crs = QgsProject.instance().crs()
-            unit = (
-                getattr(QgsUnitTypes, "DistanceMeters", None)
-                if not project_crs.isGeographic() else
-                getattr(QgsUnitTypes, "DistanceKilometers", getattr(QgsUnitTypes, "DistanceMeters", None))
-            )
-            if unit is not None:
-                scalebar.setUnits(unit)
-            scalebar.setNumberOfSegments(4)
-            scalebar.setNumberOfSegmentsLeft(0)
-            try:
-                units_per_segment = max(map_item.extent().width() / 8.0, 1.0)
-                if project_crs.isGeographic():
-                    units_per_segment = max(units_per_segment * 111.32, 0.1)
-                scalebar.setUnitsPerSegment(units_per_segment)
-            except Exception:
-                pass
-            try:
-                scalebar.setHeight(3.6)
-            except Exception:
-                pass
-            try:
-                scalebar.setFont(QFont("Arial", 7))
-                scalebar.setFontColor(QColor("#e2e8f0"))
-                scalebar.setFillColor(QColor("#f8fafc"))
-                scalebar.setFillColor2(QColor("#475569"))
-                scalebar.setLineColor(QColor("#e2e8f0"))
-            except Exception:
-                pass
-            layout.addLayoutItem(scalebar)
-            self._layout_place_item(layout, scalebar, x, y, w, h, page=page)
-            try:
-                scalebar.update()
-            except Exception:
-                pass
-            return scalebar
-        except Exception:
-            return None
-
-    def _layout_enable_map_grid(self, map_item):
-        try:
-            from qgis.core import QgsLayoutItemMapGrid, QgsProject
-
-            grids = map_item.grids()
-            add_grid = getattr(grids, "addGrid", None)
-            if add_grid is None:
-                return None
-            grid = add_grid("GeoFusionGrid")
-            grid.setEnabled(True)
-            extent = map_item.extent()
-            geographic = QgsProject.instance().crs().isGeographic()
-            grid.setIntervalX(self._nice_layout_interval(extent.width(), geographic))
-            grid.setIntervalY(self._nice_layout_interval(extent.height(), geographic))
-            try:
-                grid.setAnnotationEnabled(True)
-                grid.setAnnotationPrecision(5 if geographic else 1)
-            except Exception:
-                pass
-            try:
-                frame_style = compat_enum(QgsLayoutItemMapGrid, "InteriorTicks", "FrameStyle", default=None)
-                if frame_style is not None:
-                    grid.setFrameStyle(frame_style)
-            except Exception:
-                pass
-            try:
-                grid.setStyle(compat_enum(QgsLayoutItemMapGrid, "Solid", "GridStyle", default=None))
-            except Exception:
-                pass
-            return grid
-        except Exception:
-            return None
-
-    def _layout_wrapped_text(self, lines, width=34):
-        wrapped = []
-        for line in lines or []:
-            parts = textwrap.wrap(str(line), width=width) or [str(line)]
-            wrapped.extend(parts)
-        return "\n".join(wrapped)
-
-    def _layout_add_text_box(self, layout, text, x, y, w, h, *,
-                             title=False, font_size=8.5, page=0,
-                             background="#1e2437", foreground="#e2e8f0"):
-        from qgis.PyQt.QtGui import QColor, QFont
-        from qgis.core import QgsLayoutItemLabel
-
-        item = QgsLayoutItemLabel(layout)
-        item.setText(text)
-        font = QFont("Arial", max(1, int(round(font_size))))
-        font.setBold(bool(title))
-        item.setFont(font)
-        item.setFontColor(QColor(foreground))
-        try:
-            item.setMarginX(2.5)
-            item.setMarginY(2.0)
-        except Exception:
-            pass
-        item.setBackgroundEnabled(True)
-        item.setBackgroundColor(QColor(background))
-        item.setFrameEnabled(True)
-        item.setFrameStrokeColor(QColor("#2d3757"))
-        layout.addLayoutItem(item)
-        self._layout_place_item(layout, item, x, y, w, h, page=page)
-        return item
-
-    def _layout_add_legend(self, layout, map_item, x, y, w, h, *, page=0,
-                           title="Legenda / Layers"):
-        from qgis.PyQt.QtGui import QColor
-        from qgis.core import QgsLayoutItemLegend
-
-        try:
-            legend = QgsLayoutItemLegend(layout)
-            legend.setTitle(title)
-            try:
-                legend.setLinkedMap(map_item)
-                legend.setFilterByMapItems([map_item])
-                legend.updateFilterByMap(False)
-            except Exception:
-                pass
-            try:
-                legend.setResizeToContents(True)
-            except Exception:
-                pass
-            legend.setBackgroundEnabled(True)
-            legend.setBackgroundColor(QColor("#0f172a"))
-            legend.setFrameEnabled(True)
-            legend.setFrameStrokeColor(QColor("#334155"))
-            layout.addLayoutItem(legend)
-            self._layout_place_item(layout, legend, x, y, w, h, page=page)
-            try:
-                legend.adjustBoxSize()
-            except Exception:
-                pass
-            return legend
-        except Exception:
-            return None
-
-    def _layout_table_svg(self, title, rows, width=760):
-        rows = [(str(label), str(value)) for label, value in (rows or [])]
-        if not rows:
-            rows = [("Info", "Nessun dato disponibile")]
-        pad = 18
-        title_h = 30
-        header_h = 24
-        row_h = 26
-        table_y = pad + title_h
-        total_h = table_y + header_h + len(rows) * row_h + pad
-        col1_w = int((width - pad * 2) * 0.46)
-        col2_x = pad + col1_w
-        col2_w = width - pad * 2 - col1_w
-        line_y = table_y + header_h
-        row_svg = []
-        for idx, (label, value) in enumerate(rows):
-            y = line_y + idx * row_h
-            fill = "#1a2235" if idx % 2 == 0 else "#111827"
-            row_svg.append(
-                "<rect x='{x}' y='{y}' width='{w1}' height='{h}' fill='{fill}'/>"
-                "<rect x='{x2}' y='{y}' width='{w2}' height='{h}' fill='#0f172a'/>"
-                "<line x1='{x}' y1='{y2}' x2='{x3}' y2='{y2}' stroke='#334155' stroke-width='1'/>"
-                "<text x='{tx1}' y='{ty}' fill='#9ec5ff' font-size='12' font-family='Arial' font-weight='700'>{label}</text>"
-                "<text x='{tx2}' y='{ty}' fill='#f8fafc' font-size='12' font-family='Arial'>{value}</text>".format(
-                    x=pad,
-                    y=y,
-                    w1=col1_w,
-                    h=row_h,
-                    fill=fill,
-                    x2=col2_x,
-                    w2=col2_w,
-                    y2=y + row_h,
-                    x3=width - pad,
-                    tx1=pad + 8,
-                    tx2=col2_x + 8,
-                    ty=y + 17,
-                    label=html.escape(label.upper()),
-                    value=html.escape(value),
-                )
-            )
-        return """<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-<rect width="100%" height="100%" rx="12" ry="12" fill="#0e1118" stroke="#334155"/>
-<text x="{pad}" y="{title_y}" fill="#f8fafc" font-size="16" font-family="Arial" font-weight="700">{title}</text>
-<rect x="{pad}" y="{head_y}" width="{w1}" height="{head_h}" fill="#24314a"/>
-<rect x="{x2}" y="{head_y}" width="{w2}" height="{head_h}" fill="#1a2235"/>
-<text x="{tx1}" y="{head_text_y}" fill="#9ec5ff" font-size="12" font-family="Arial" font-weight="700">ATTRIBUTO</text>
-<text x="{tx2}" y="{head_text_y}" fill="#9ec5ff" font-size="12" font-family="Arial" font-weight="700">VALORE</text>
-{rows_svg}
-</svg>""".format(
-            width=width,
-            height=total_h,
-            pad=pad,
-            title_y=pad + 16,
-            title=html.escape(str(title or "Tabella attributi")),
-            head_y=table_y,
-            w1=col1_w,
-            x2=col2_x,
-            w2=col2_w,
-            head_h=header_h,
-            tx1=pad + 8,
-            tx2=col2_x + 8,
-            head_text_y=table_y + 16,
-            rows_svg="".join(row_svg),
-        )
-
-    def _profile_report_rows(self):
-        points = self.last_points_data or []
-        valid = [p for p in points if p.get("elevation") is not None]
-        total_m = float(self.last_total_dist or 0.0)
-        pickets = build_pickets(points, total_m) if points else []
-        context = self.last_report_context or {}
-        rows = [
-            ("Distanza", f"{total_m:.2f} m"),
-            ("Campioni", len(points)),
-            ("Picchetti", len(pickets)),
-            ("Sorgente", context.get("source_label", "n/d")),
-        ]
-        if valid:
-            rows.extend([
-                ("Quota minima", f"{min(float(p['elevation']) for p in valid):.2f} m"),
-                ("Quota massima", f"{max(float(p['elevation']) for p in valid):.2f} m"),
-            ])
-        return rows
-
-    def _section_overview_rows(self, data):
-        dp = data.get("design_profile") or {}
-        metrics = data.get("road_metrics") or {}
-        rows = [
-            ("Sviluppo asse", f"{float(data.get('alignment_length_m') or 0.0):.2f} m"),
-            ("Numero sezioni", int(data.get("n_sections") or 0)),
-            ("Intervallo", f"{float(data.get('interval_m') or 0.0):.2f} m"),
-            ("Larghezza totale", f"{float(data.get('half_width_m') or 0.0) * 2.0:.2f} m"),
-            ("Sterro totale", f"{float(data.get('total_cut_m3') or 0.0):.2f} m3"),
-            ("Riporto totale", f"{float(data.get('total_fill_m3') or 0.0):.2f} m3"),
-            ("Bilancio", f"{float((data.get('total_fill_m3') or 0.0) - (data.get('total_cut_m3') or 0.0)):.2f} m3"),
-        ]
-        if dp.get("start_elevation") is not None:
-            rows.append(("Quota progetto iniziale", f"{float(dp.get('start_elevation') or 0.0):.2f} m"))
-        if dp.get("end_elevation") is not None:
-            rows.append(("Quota progetto finale", f"{float(dp.get('end_elevation') or 0.0):.2f} m"))
-        if dp.get("grade_pct") is not None:
-            rows.append(("Pendenza progetto", f"{float(dp.get('grade_pct') or 0.0):.2f} %"))
-        if metrics:
-            rows.append(("Pendenza media", f"{float(metrics.get('avg_grade_pct') or 0.0):.2f} %"))
-            rows.append(("Curve rilevate", int(metrics.get("curve_count") or 0)))
-        return rows
-
-    def _section_report_rows(self, sec):
-        pts = [p for p in (sec.get("points") or []) if p.get("elevation") is not None]
-        rows = [
-            ("Sezione", int(sec.get("index") or 0)),
-            ("Progressiva", f"{float(sec.get('progressive_m') or 0.0):.2f} m"),
-            ("Quota minima", "n/d" if sec.get("min_elevation") is None else f"{float(sec.get('min_elevation') or 0.0):.2f} m"),
-            ("Quota massima", "n/d" if sec.get("max_elevation") is None else f"{float(sec.get('max_elevation') or 0.0):.2f} m"),
-            ("Quota progetto", "n/d" if sec.get("design_elevation") is None else f"{float(sec.get('design_elevation') or 0.0):.2f} m"),
-            ("Area sezione", f"{float(sec.get('area_m2') or 0.0):.2f} m2"),
-            ("Sterro", f"{float(sec.get('cut_area_m2') or 0.0):.2f} m2"),
-            ("Riporto", f"{float(sec.get('fill_area_m2') or 0.0):.2f} m2"),
-            ("Campioni validi", len(pts)),
-        ]
-        return rows
-
-    def _layout_add_page_footer(self, layout, page, text):
-        self._layout_add_text_box(
-            layout,
-            text,
-            12, 286, 396, 8,
-            page=page,
-            font_size=7,
-            background="#0f172a",
-            foreground="#8ba3c7",
-        )
-
-    def _report_layout_extent(self, points):
-        from qgis.core import QgsGeometry
-
-        project = QgsProject.instance()
-        geom = QgsGeometry.fromPolylineXY(points)
-        extent = geom.boundingBox()
-        buf = 500 / 111320.0 if project.crs().isGeographic() else 500
-        extent.setXMinimum(extent.xMinimum() - buf)
-        extent.setXMaximum(extent.xMaximum() + buf)
-        extent.setYMinimum(extent.yMinimum() - buf)
-        extent.setYMaximum(extent.yMaximum() + buf)
-        return extent
-
-    def _current_report_title(self):
-        if self.current_mode == "sections":
-            return "Cross Sections / Sezioni Trasversali"
-        return "Elevation Profile / Profilo Altimetrico"
-
-    def _create_report_layout(self, points, svg_content, layout_name, svg_path, *, add_to_project):
-        from qgis.PyQt.QtGui import QColor
-        from qgis.core import (
-            QgsPrintLayout,
-            QgsLayoutItemMap,
-        )
-
-        project = QgsProject.instance()
-        if add_to_project:
-            for layout in project.layoutManager().printLayouts():
-                if layout.name() == layout_name:
-                    project.layoutManager().removeLayout(layout)
-
-        layout = QgsPrintLayout(project)
-        layout.initializeDefaults()
-        layout.setName(layout_name)
-        if add_to_project:
-            project.layoutManager().addLayout(layout)
-
-        extent = self._report_layout_extent(points)
-        asset_dir = os.path.dirname(svg_path) if svg_path else None
-        context = self.last_report_context or {}
-        source_label = context.get("source_label", "n/d")
-        project_crs = context.get("project_crs", "n/d")
-        data_crs = context.get("data_crs", "n/d")
-        notes = context.get("notes", [])[:5]
-        layers = context.get("layers", []) or ["Nessun layer registrato."]
-        project_name = project.title() or project.baseName() or "Project"
-        now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        geographic = project.crs().isGeographic()
-        total_pages = 2
-        if self.current_mode == "sections" and self.last_cross_sections_data:
-            total_pages += len(self.last_cross_sections_data.get("sections") or [])
-
-        self._layout_ensure_page(layout, 0).setPageSize(self._layout_page_size())
-
-        map_item = QgsLayoutItemMap(layout)
-        map_item.setExtent(extent)
-        map_item.setFrameEnabled(True)
-        try:
-            map_item.setBackgroundColor(QColor("#f8fafc"))
-            map_item.setFrameStrokeColor(QColor("#0f172a"))
-        except Exception:
-            pass
-        layout.addLayoutItem(map_item)
-        self._layout_place_item(layout, map_item, 12, 24, 278, 176, page=0)
-        try:
-            layout.setReferenceMap(map_item)
-        except Exception:
-            pass
-        self._layout_enable_map_grid(map_item)
-        self._layout_add_north_arrow(layout, 270, 30, 14, 24, page=0)
-        self._layout_add_scale_bar(layout, map_item, 18, 192, 80, 10, page=0)
-
-        center = extent.center()
-        coord_lines = [
-            f"Scale 1:{int(round(map_item.scale())):,}".replace(",", "."),
-            f"Center X: {self._format_layout_coord(center.x(), geographic)}",
-            f"Center Y: {self._format_layout_coord(center.y(), geographic)}",
-            f"X min/max: {self._format_layout_coord(extent.xMinimum(), geographic)} / {self._format_layout_coord(extent.xMaximum(), geographic)}",
-            f"Y min/max: {self._format_layout_coord(extent.yMinimum(), geographic)} / {self._format_layout_coord(extent.yMaximum(), geographic)}",
-        ]
-        sampling_note = "Campionamento: quote lette dal dato sorgente selezionato."
-        if self.current_mode == "sections":
-            sampling_note = "Campionamento: sezioni e volumi letti dal DEM/DTM selezionato."
-
-        self._layout_add_text_box(
-            layout,
-            f"{self._current_report_title()}\n{project_name}",
-            12, 8, 278, 16,
-            title=True,
-            font_size=11,
-            background="#111827",
-            foreground="#f8fafc",
-            page=0,
-        )
-        self._layout_add_text_box(
-            layout,
-            self._layout_wrapped_text([
-                f"Data / Date: {now_str}",
-                f"Sorgente / Source: {source_label}",
-                sampling_note,
-            ], width=34),
-            296, 24, 112, 38,
-            font_size=8,
-            background="#172033",
-            page=0,
-        )
-        self._layout_add_text_box(
-            layout,
-            self._layout_wrapped_text([
-                "CRS e misure",
-                f"Project CRS: {project_crs}",
-                f"Data CRS: {data_crs}",
-                *notes,
-            ], width=34),
-            296, 66, 112, 64,
-            font_size=7.5,
-            background="#1a2235",
-            page=0,
-        )
-        self._layout_add_text_box(
-            layout,
-            self._layout_wrapped_text([
-                "Coordinate e inquadramento",
-                *coord_lines,
-            ], width=34),
-            296, 134, 112, 48,
-            font_size=7.5,
-            background="#132235",
-            page=0,
-        )
-        legend = self._layout_add_legend(
-            layout,
-            map_item,
-            296, 186, 112, 40,
-            page=0,
-            title="Legenda layer",
-        )
-        layers_y = 230 if legend else 186
-        layers_h = 48 if legend else 92
-        self._layout_add_text_box(
-            layout,
-            self._layout_wrapped_text([
-                "Layer in mappa",
-                *layers,
-            ], width=34),
-            296, layers_y, 112, layers_h,
-            font_size=7.2,
-            background="#0f172a",
-            page=0,
-        )
-        self._layout_add_text_box(
-            layout,
-            self._layout_wrapped_text([
-                "Mappa tecnica",
-                "Reticolo, freccia nord, scala grafica e coordinate del riquadro sono allineati al CRS di progetto.",
-                "I layer vettoriali generati devono restare sopra il raster nella composizione finale.",
-            ], width=76),
-            12, 206, 278, 72,
-            font_size=7.8,
-            background="#101824",
-            page=0,
-        )
-        self._layout_add_page_footer(
-            layout,
-            0,
-            f"Pagina 1/{total_pages} · Inquadramento cartografico e cartiglio tecnico",
-        )
-
-        self._layout_ensure_page(layout, 1).setPageSize(self._layout_page_size())
-        if not svg_path and svg_content:
-            svg_path = self._write_svg_asset(asset_dir or self._default_output_dir(), "chart_overview", svg_content)
-        chart_rows = self._profile_report_rows()
-        chart_title = "Tabella attributi profilo"
-        if self.current_mode == "sections" and self.last_cross_sections_data:
-            chart_rows = self._section_overview_rows(self.last_cross_sections_data)
-            chart_title = "Tabella attributi generale sezioni"
-        summary_table_path = self._write_svg_asset(
-            asset_dir or self._default_output_dir(),
-            "summary_attributes",
-            self._layout_table_svg(chart_title, chart_rows, width=1120),
-        )
-        self._layout_add_text_box(
-            layout,
-            f"{self._current_report_title()}\nGrafico generale e tabella attributi",
-            12, 10, 396, 20,
-            title=True,
-            font_size=11,
-            background="#111827",
-            foreground="#f8fafc",
-            page=1,
-        )
-        self._layout_add_picture_box(
-            layout,
-            svg_path,
-            12, 32, 396, 114,
-            page=1,
-            frame=True,
-            background="#0f172a",
-            stroke="#0f172a",
-        )
-        self._layout_add_picture_box(
-            layout,
-            summary_table_path,
-            12, 152, 396, 126,
-            page=1,
-            frame=False,
-            background=None,
-            stroke=None,
-        )
-        self._layout_add_page_footer(
-            layout,
-            1,
-            f"Pagina 2/{total_pages} · Grafico generale e attributi",
-        )
-
-        if self.current_mode == "sections" and self.last_cross_sections_data:
-            data = self.last_cross_sections_data
-            for offset, sec in enumerate(data.get("sections") or [], start=2):
-                self._layout_ensure_page(layout, offset).setPageSize(self._layout_page_size())
-                sec_num = int(sec.get("index") or 0)
-                section_svg_path = self._write_svg_asset(
-                    asset_dir or self._default_output_dir(),
-                    f"section_{sec_num:03d}_graph",
-                    self._section_detail_svg(sec, 1280, 460),
-                )
-                section_table_path = self._write_svg_asset(
-                    asset_dir or self._default_output_dir(),
-                    f"section_{sec_num:03d}_attributes",
-                    self._layout_table_svg(
-                        f"Sezione {sec_num:02d} · Tabella attributi",
-                        self._section_report_rows(sec),
-                        width=1120,
-                    ),
-                )
-                related_volumes = []
-                for volume in data.get("volumes") or []:
-                    if volume.get("from_section") == sec_num or volume.get("to_section") == sec_num:
-                        related_volumes.append(
-                            "Tratta {0}->{1}: V={2:.2f} m3 | Sterro={3:.2f} m3 | Riporto={4:.2f} m3".format(
-                                int(volume.get("from_section") or 0),
-                                int(volume.get("to_section") or 0),
-                                float(volume.get("volume_m3") or 0.0),
-                                float(volume.get("cut_m3") or 0.0),
-                                float(volume.get("fill_m3") or 0.0),
-                            )
-                        )
-                related_text = "; ".join(related_volumes[:2]) if related_volumes else "n/d"
-                footer_note = self._layout_wrapped_text([
-                    "Sorgente quote: {0} | CRS progetto: {1} | CRS dato: {2}".format(
-                        source_label,
-                        project_crs,
-                        data_crs,
-                    ),
-                    "Relazioni volumetriche: {0}".format(related_text),
-                ], width=112)
-                self._layout_add_text_box(
-                    layout,
-                    "Sezione {0:02d} · Progressiva {1:.2f} m".format(
-                        sec_num,
-                        float(sec.get("progressive_m") or 0.0),
-                    ),
-                    12, 12, 396, 14,
-                    title=True,
-                    font_size=11,
-                    background="#111827",
-                    foreground="#f8fafc",
-                    page=offset,
-                )
-                self._layout_add_picture_box(
-                    layout,
-                    section_svg_path,
-                    12, 32, 396, 104,
-                    page=offset,
-                    frame=True,
-                    background="#0f172a",
-                    stroke="#0f172a",
-                )
-                self._layout_add_picture_box(
-                    layout,
-                    section_table_path,
-                    12, 142, 396, 108,
-                    page=offset,
-                    frame=False,
-                    background=None,
-                    stroke=None,
-                )
-                self._layout_add_text_box(
-                    layout,
-                    footer_note,
-                    12, 254, 396, 24,
-                    font_size=7.2,
-                    background="#101824",
-                    page=offset,
-                )
-                self._layout_add_page_footer(
-                    layout,
-                    offset,
-                    f"Pagina {offset + 1}/{total_pages} · Sezione {sec_num:02d} con grafico e tabella attributi",
-                )
-        return layout
-
-    def _render_svg_to_image(self, svg_content, *, fallback_size, min_size=None, scale=1.0,
-                             background="#12151e"):
-        if not svg_content:
-            raise ValueError("Contenuto SVG mancante / Missing SVG content.")
-
-        from qgis.PyQt.QtCore import QByteArray, QSize as QtSize
-        from qgis.PyQt.QtGui import QImage, QPainter, QColor
-        from qgis.PyQt.QtSvg import QSvgRenderer
-
-        renderer = QSvgRenderer(QByteArray(svg_content.encode("utf-8")))
-        if not renderer.isValid():
-            raise ValueError("SVG non valido / Invalid SVG content.")
-
-        default_size = renderer.defaultSize()
-        if default_size.isEmpty():
-            default_size = QtSize(*fallback_size)
-
-        width = int(default_size.width() * scale)
-        height = int(default_size.height() * scale)
-        if min_size:
-            width = max(min_size[0], width)
-            height = max(min_size[1], height)
-
-        image = QImage(
-            width,
-            height,
-            compat_enum(QImage, "Format_ARGB32", "Format"),
-        )
-        image.fill(QColor(background))
-
-        painter = QPainter(image)
-        try:
-            antialiasing = compat_enum(QPainter, "Antialiasing", "RenderHint", default=None)
-            if antialiasing is not None:
-                painter.setRenderHint(antialiasing)
-            renderer.render(painter)
-        finally:
-            painter.end()
-        return image
-
     def _svg_to_png(self, svg_content, name):
         if not svg_content:
             return None
         try:
-            image = self._render_svg_to_image(
-                svg_content,
-                fallback_size=(1700, 1100),
-                min_size=(900, 520),
-                background="#12151e",
+            from qgis.PyQt.QtCore import QByteArray, QSize as QtSize
+            from qgis.PyQt.QtGui import QImage, QPainter, QColor
+            from qgis.PyQt.QtSvg import QSvgRenderer
+
+            renderer = QSvgRenderer(QByteArray(svg_content.encode("utf-8")))
+            default_size = renderer.defaultSize()
+            if default_size.isEmpty():
+                default_size = QtSize(1700, 1100)
+            width = max(900, int(default_size.width()))
+            height = max(520, int(default_size.height()))
+            image = QImage(
+                width,
+                height,
+                QImage.Format_ARGB32 if hasattr(QImage, "Format_ARGB32") else 5,
             )
+            image.fill(QColor("#12151e"))
+            painter = QPainter(image)
+            try:
+                painter.setRenderHint(QPainter.Antialiasing)
+            except Exception:
+                pass
+            renderer.render(painter)
+            painter.end()
             chart_dir = os.path.join(self._default_output_dir(), "_charts")
             os.makedirs(chart_dir, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             path = os.path.join(chart_dir, f"{name}_{stamp}.png")
-            if not image.save(path, "PNG"):
-                raise IOError(f"Impossibile salvare il PNG: {path}")
+            image.save(path, "PNG")
             return path
         except Exception as exc:
             self._push("Grafico / Chart", f"PNG grafico non creato: {exc}", "Warning")
@@ -1283,8 +295,7 @@ class ProfiliSezioniComuniPlugin:
         self.last_vector_gpkg = self._write_vector_package(self.last_vector_layers, gpkg_path)
         return self.last_vector_gpkg
 
-    def _enable_labels(self, layer, field_name="label", color="#f1f5f9", size=8,
-                       placement=None, allow_overlaps=False):
+    def _enable_labels(self, layer, field_name="label", color="#f1f5f9", size=8):
         try:
             from qgis.PyQt.QtGui import QColor
             from qgis.core import (
@@ -1296,20 +307,6 @@ class ProfiliSezioniComuniPlugin:
 
             settings = QgsPalLayerSettings()
             settings.fieldName = field_name
-            if placement is not None:
-                try:
-                    settings.placement = placement
-                except Exception:
-                    pass
-            if allow_overlaps:
-                for attr_name, attr_value in (
-                        ("displayAll", True),
-                        ("obstacle", False),
-                ):
-                    try:
-                        setattr(settings, attr_name, attr_value)
-                    except Exception:
-                        pass
             fmt = QgsTextFormat()
             fmt.setSize(size)
             fmt.setColor(QColor(color))
@@ -1324,54 +321,6 @@ class ProfiliSezioniComuniPlugin:
             layer.triggerRepaint()
         except Exception:
             pass
-
-    FIELD_ALIASES = {
-        "id": ("ID", "ID"),
-        "id_curva": ("ID curva", "Curve ID"),
-        "sezione": ("Sezione", "Section"),
-        "da_sez": ("Da sezione", "From section"),
-        "a_sez": ("A sezione", "To section"),
-        "length_m": ("Lunghezza (m)", "Length (m)"),
-        "prog_m": ("Progressiva (m)", "Progressive (m)"),
-        "parziale_m": ("Parziale (m)", "Partial (m)"),
-        "offset_m": ("Offset (m)", "Offset (m)"),
-        "dist_m": ("Distanza (m)", "Distance (m)"),
-        "quota_m": ("Quota (m)", "Elevation (m)"),
-        "quota": ("Quota (m)", "Elevation (m)"),
-        "quota_min": ("Quota min (m)", "Min elevation (m)"),
-        "quota_max": ("Quota max (m)", "Max elevation (m)"),
-        "quota_prj": ("Quota progetto (m)", "Design elevation (m)"),
-        "lon": ("Longitudine", "Longitude"),
-        "lat": ("Latitudine", "Latitude"),
-        "area": ("Area", "Area"),
-        "area_m2": ("Area (m²)", "Area (m²)"),
-        "cut_m2": ("Sterro (m²)", "Cut (m²)"),
-        "fill_m2": ("Riporto (m²)", "Fill (m²)"),
-        "volume_m3": ("Volume (m³)", "Volume (m³)"),
-        "sterro_m3": ("Sterro (m³)", "Cut (m³)"),
-        "riporto_m3": ("Riporto (m³)", "Fill (m³)"),
-        "cum_sterro": ("Sterro cumulato (m³)", "Cumulative cut (m³)"),
-        "cum_riporto": ("Riporto cumulato (m³)", "Cumulative fill (m³)"),
-        "tipo": ("Tipo", "Type"),
-        "colore": ("Colore", "Color"),
-        "mode": ("Modalità", "Mode"),
-        "value": ("Valore", "Value"),
-        "label": ("Etichetta", "Label"),
-        "chart_png": ("Grafico PNG", "Chart PNG"),
-        "name": ("Nome", "Name"),
-        "display_name": ("Nome esteso", "Full name"),
-    }
-
-    def _apply_field_aliases(self, layer):
-        """Set bilingual (IT/EN) display aliases on a generated layer's fields,
-        following the language currently selected in the dialog."""
-        lang = getattr(self.dialog, "lang", "it") if getattr(self, "dialog", None) else "it"
-        fields = layer.fields()
-        for idx, field in enumerate(fields):
-            alias_it, alias_en = self.FIELD_ALIASES.get(field.name(), (None, None))
-            if alias_it is None:
-                continue
-            layer.setFieldAlias(idx, alias_en if lang == "en" else alias_it)
 
     def _style_line_layer(self, layer, color, width=0.7, label_field=None):
         try:
@@ -1403,476 +352,6 @@ class ProfiliSezioniComuniPlugin:
             layer.triggerRepaint()
         except Exception:
             pass
-
-    def _style_section_label_layer(self, layer):
-        try:
-            from qgis.core import QgsMarkerSymbol, QgsPalLayerSettings, QgsSingleSymbolRenderer
-
-            symbol = QgsMarkerSymbol.createSimple({
-                "name": "circle",
-                "color": "0,0,0,0",
-                "outline_color": "0,0,0,0",
-                "size": "0.4",
-            })
-            layer.setRenderer(QgsSingleSymbolRenderer(symbol))
-            placement = compat_enum(
-                QgsPalLayerSettings,
-                "OverPoint",
-                "Placement",
-                default=None,
-            )
-            self._enable_labels(
-                layer,
-                "label",
-                "#f8fafc",
-                8.5,
-                placement=placement,
-                allow_overlaps=True,
-            )
-            layer.triggerRepaint()
-        except Exception:
-            self._enable_labels(layer, "label", "#f8fafc", 8.5)
-
-    def _style_interpolated_raster_layer(self, layer, min_value, max_value, mode):
-        try:
-            from qgis.PyQt.QtGui import QColor
-            from qgis.core import (
-                QgsColorRampShader,
-                QgsRasterShader,
-                QgsSingleBandPseudoColorRenderer,
-            )
-
-            if not layer or not layer.isValid():
-                return
-
-            mn = float(min_value)
-            mx = float(max_value)
-            if not math.isfinite(mn) or not math.isfinite(mx):
-                return
-            if math.isclose(mn, mx, rel_tol=0.0, abs_tol=1e-9):
-                mx = mn + 1.0
-
-            shader = QgsRasterShader()
-            color_shader = QgsColorRampShader()
-            color_shader.setColorRampType(
-                compat_enum(QgsColorRampShader, "Interpolated", "ColorRampType")
-            )
-
-            if mode == "delta":
-                span = max(abs(mn), abs(mx), 0.01)
-                items = [
-                    QgsColorRampShader.ColorRampItem(-span, QColor("#15803d"), "Riporto / Fill"),
-                    QgsColorRampShader.ColorRampItem(0.0, QColor("#f8fafc"), "Zero"),
-                    QgsColorRampShader.ColorRampItem(span, QColor("#b91c1c"), "Sterro / Cut"),
-                ]
-                layer.setOpacity(0.76)
-            else:
-                mid = mn + (mx - mn) * 0.5
-                items = [
-                    QgsColorRampShader.ColorRampItem(mn, QColor("#1d4ed8"), "Min"),
-                    QgsColorRampShader.ColorRampItem(mid, QColor("#f59e0b"), "Med"),
-                    QgsColorRampShader.ColorRampItem(mx, QColor("#7c2d12"), "Max"),
-                ]
-                layer.setOpacity(0.72)
-
-            color_shader.setColorRampItemList(items)
-            shader.setRasterShaderFunction(color_shader)
-            renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-            layer.setRenderer(renderer)
-            layer.triggerRepaint()
-        except Exception:
-            pass
-
-    def _field_value(self, feature, field_name, default=None):
-        try:
-            if feature is None or feature.fields().indexOf(field_name) < 0:
-                return default
-            value = feature[field_name]
-            return default if value in (None, "") else value
-        except Exception:
-            return default
-
-    def _format_feature_value(self, value):
-        if value in (None, ""):
-            return "—"
-        if isinstance(value, float):
-            return f"{value:.3f}".rstrip("0").rstrip(".")
-        return str(value)
-
-    def _build_section_popup_html(self, layer, feature):
-        chart_html = ""
-
-        section_idx = self._field_value(feature, "sezione")
-        progressive = self._field_value(feature, "prog_m")
-        label = self._field_value(feature, "label")
-        title = label or (
-            f"Sezione {int(section_idx):02d}" if section_idx not in (None, "") else layer.name()
-        )
-
-        section_rows = ""
-        if section_idx is not None and self.last_cross_sections_data:
-            try:
-                section_idx_int = int(section_idx)
-                sec = next(
-                    (s for s in self.last_cross_sections_data.get("sections", []) if int(s.get("index") or 0) == section_idx_int),
-                    None,
-                )
-                if sec:
-                    for row_label, row_value in (
-                            ("Sezione", sec.get("index")),
-                            ("Progressiva (m)", sec.get("progressive_m")),
-                            ("Quota min (m)", sec.get("min_elevation")),
-                            ("Quota max (m)", sec.get("max_elevation")),
-                            ("Quota progetto (m)", sec.get("design_elevation")),
-                            ("Area (m²)", sec.get("area_m2")),
-                            ("Sterro (m²)", sec.get("cut_area_m2")),
-                            ("Riporto (m²)", sec.get("fill_area_m2")),
-                    ):
-                        section_rows += (
-                            f"<tr><th>{html.escape(str(row_label))}</th>"
-                            f"<td>{html.escape(self._format_feature_value(row_value))}</td></tr>"
-                        )
-                    chart_html = (
-                        "<div style='margin:0 0 12px;'>"
-                        f"{self._section_detail_svg(sec, 680, 240)}"
-                        "</div>"
-                    )
-            except Exception:
-                section_rows = ""
-
-        attr_rows = ""
-        for field in feature.fields():
-            name = field.name()
-            if name == "chart_png":
-                continue
-            value = self._field_value(feature, name)
-            if value in (None, ""):
-                continue
-            attr_rows += (
-                f"<tr><th>{html.escape(name)}</th>"
-                f"<td>{html.escape(self._format_feature_value(value))}</td></tr>"
-            )
-
-        subtitle = []
-        if section_idx not in (None, ""):
-            subtitle.append(f"Sezione {int(section_idx):02d}")
-        if progressive not in (None, ""):
-            subtitle.append(f"Prog. {self._format_feature_value(progressive)} m")
-        subtitle_html = " · ".join(html.escape(s) for s in subtitle)
-
-        section_table = (
-            "<div style='margin:0 0 12px;'><strong style='color:#f1f5f9;'>Riepilogo sezione</strong>"
-            "<table style='width:100%;border-collapse:collapse;margin-top:8px;'>"
-            f"{section_rows}</table></div>"
-        ) if section_rows else ""
-        attr_table = (
-            "<div><strong style='color:#f1f5f9;'>Attributi feature</strong>"
-            "<table style='width:100%;border-collapse:collapse;margin-top:8px;'>"
-            f"{attr_rows}</table></div>"
-        ) if attr_rows else ""
-
-        return f"""
-        <html>
-        <head>
-        <style>
-          body {{ background:#12151e; color:#e2e8f0; font-family:'Segoe UI',Arial,sans-serif;
-                 font-size:12px; margin:14px; line-height:1.55; }}
-          h2 {{ margin:0 0 4px; color:#f8fafc; font-size:18px; }}
-          .sub {{ color:#8ba3c7; margin:0 0 12px; }}
-          table {{ width:100%; border-collapse:collapse; }}
-          th {{ width:42%; text-align:left; padding:6px 8px; color:#93c5fd;
-               border-bottom:1px solid #2d3757; vertical-align:top; }}
-          td {{ padding:6px 8px; border-bottom:1px solid #2d3757; color:#e2e8f0; }}
-        </style>
-        </head>
-        <body>
-          <h2>{html.escape(title)}</h2>
-          <div class="sub">{subtitle_html}</div>
-          {chart_html}
-          {section_table}
-          {attr_table}
-        </body>
-        </html>
-        """
-
-    def _show_section_feature_popup(self, layer, feature):
-        if feature is None:
-            return
-        if self._active_section_popup is not None:
-            try:
-                self._active_section_popup.close()
-            except Exception:
-                pass
-            self._active_section_popup = None
-
-        dialog = QDialog(self.dialog or self.iface.mainWindow())
-        dialog.setWindowTitle(layer.name())
-        dialog.resize(760, 620)
-        layout = QVBoxLayout(dialog)
-        browser = QTextBrowser(dialog)
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(self._build_section_popup_html(layer, feature))
-        layout.addWidget(browser)
-        buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=dialog)
-        buttons.rejected.connect(dialog.reject)
-        buttons.accepted.connect(dialog.accept)
-        layout.addWidget(buttons)
-        dialog.finished.connect(lambda _res: setattr(self, "_active_section_popup", None))
-        self._active_section_popup = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-
-    def _on_section_layer_selection_changed(self, layer, selected, _deselected, _clear_and_select):
-        if not selected:
-            return
-        try:
-            from qgis.core import QgsFeatureRequest
-            request = QgsFeatureRequest()
-            request.setFilterFids(list(selected))
-            feature = next(layer.getFeatures(request), None)
-        except Exception:
-            feature = None
-        if feature is not None:
-            self._show_section_feature_popup(layer, feature)
-
-    def _connect_section_popup(self, layer):
-        if not layer or not layer.isValid() or layer.id() in self._popup_connected_layer_ids:
-            return
-        try:
-            if layer.fields().indexOf("sezione") < 0:
-                return
-        except Exception:
-            return
-        layer.selectionChanged.connect(
-            lambda selected, deselected, clear_and_select, layer=layer:
-            self._on_section_layer_selection_changed(layer, selected, deselected, clear_and_select)
-        )
-        self._popup_connected_layer_ids.add(layer.id())
-
-    def _create_section_interpolated_raster(self, data, raster_layer, group=None):
-        sections = data.get("sections") or []
-        if not raster_layer or not sections:
-            return None, None
-
-        try:
-            from osgeo import gdal
-            from qgis.core import (
-                QgsCoordinateReferenceSystem,
-                QgsCoordinateTransform,
-                QgsFeature,
-                QgsGeometry,
-                QgsRasterLayer,
-                QgsRectangle,
-                QgsVectorLayer,
-            )
-        except Exception as exc:
-            self._push(
-                "Raster interpolato / Interpolated raster",
-                f"Interpolazione non disponibile: {exc}",
-                "Warning",
-            )
-            return None, None
-        try:
-            crs_target = raster_layer.crs()
-            if crs_target and crs_target.isValid() and crs_target.isGeographic():
-                self._push(
-                    "Raster interpolato / Interpolated raster",
-                    "Raster corridoio non creato: usare un DEM in CRS proiettato metrico.",
-                    "Warning",
-                )
-                return None, None
-            crs_auth = crs_target.authid() or "EPSG:4326"
-            crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
-            project = QgsProject.instance()
-            try:
-                xform_from_wgs = QgsCoordinateTransform(
-                    crs_wgs, crs_target, project.transformContext()
-                )
-            except Exception:
-                xform_from_wgs = QgsCoordinateTransform(crs_wgs, crs_target, project)
-
-            has_design = all(
-                sec.get("design_elevation") is not None
-                for sec in sections
-                if len([p for p in sec.get("points", []) if p.get("elevation") is not None]) >= 2
-            )
-            raster_mode = "delta" if has_design else "ground"
-            raster_title = (
-                "Sterro/Riporto interpolato / Interpolated cut-fill"
-                if has_design else
-                "Quote interpolate / Interpolated elevations"
-            )
-
-            pts_layer = QgsVectorLayer(
-                f"Point?crs={crs_auth}&field=sezione:integer&field=offset_m:double&field=value:double",
-                "corridor_samples",
-                "memory",
-            )
-            corridor_layer = QgsVectorLayer(
-                f"Polygon?crs={crs_auth}&field=mode:string(16)",
-                "corridor_mask",
-                "memory",
-            )
-            pr_pts = pts_layer.dataProvider()
-            pr_mask = corridor_layer.dataProvider()
-
-            feats_pts = []
-            values = []
-            left_edge = []
-            right_edge = []
-            sample_spacing = None
-
-            for sec in sections:
-                sec_pts = [
-                    p for p in sec.get("points", [])
-                    if p.get("elevation") is not None and p.get("lon") is not None and p.get("lat") is not None
-                ]
-                if len(sec_pts) < 2:
-                    continue
-                sec_pts = sorted(sec_pts, key=lambda p: float(p.get("offset_m") or 0.0))
-                if sample_spacing is None and len(sec_pts) >= 2:
-                    try:
-                        sample_spacing = abs(
-                            float(sec_pts[1].get("offset_m") or 0.0) -
-                            float(sec_pts[0].get("offset_m") or 0.0)
-                        )
-                    except Exception:
-                        sample_spacing = None
-
-                left_pt = xform_from_wgs.transform(QgsPointXY(sec_pts[0]["lon"], sec_pts[0]["lat"]))
-                right_pt = xform_from_wgs.transform(QgsPointXY(sec_pts[-1]["lon"], sec_pts[-1]["lat"]))
-                left_edge.append(QgsPointXY(left_pt))
-                right_edge.append(QgsPointXY(right_pt))
-
-                design_elev = sec.get("design_elevation")
-                for p in sec_pts:
-                    pt_map = xform_from_wgs.transform(QgsPointXY(p["lon"], p["lat"]))
-                    value = float(p["elevation"])
-                    if has_design and design_elev is not None:
-                        value -= float(design_elev)
-                    f_pt = QgsFeature()
-                    f_pt.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(pt_map)))
-                    f_pt.setAttributes([
-                        int(sec.get("index") or 0),
-                        float(p.get("offset_m") or 0.0),
-                        value,
-                    ])
-                    feats_pts.append(f_pt)
-                    values.append(value)
-
-            if len(feats_pts) < 6 or len(left_edge) < 2 or len(right_edge) < 2:
-                return None, None
-
-            pr_pts.addFeatures(feats_pts)
-            pts_layer.updateExtents()
-
-            ring = left_edge + list(reversed(right_edge))
-            if len(ring) < 4:
-                return None, None
-            ring.append(left_edge[0])
-            mask_geom = QgsGeometry.fromPolygonXY([ring])
-            if mask_geom is None or mask_geom.isEmpty():
-                return None, None
-            try:
-                if not mask_geom.isGeosValid():
-                    mask_geom = mask_geom.makeValid()
-            except Exception:
-                pass
-            if mask_geom is None or mask_geom.isEmpty():
-                return None, None
-
-            f_mask = QgsFeature()
-            f_mask.setGeometry(mask_geom)
-            f_mask.setAttributes([raster_mode])
-            pr_mask.addFeature(f_mask)
-            corridor_layer.updateExtents()
-
-            extent = QgsRectangle(mask_geom.boundingBox())
-            pixel_size = min(
-                abs(float(getattr(raster_layer, "rasterUnitsPerPixelX", lambda: 0.0)() or 0.0)),
-                abs(float(getattr(raster_layer, "rasterUnitsPerPixelY", lambda: 0.0)() or 0.0)),
-            )
-            if pixel_size <= 0 or not math.isfinite(pixel_size):
-                interval = float(data.get("interval_m") or 25.0)
-                width_step = float(sample_spacing or 5.0)
-                pixel_size = max(min(interval, width_step) / 2.0, 0.5)
-            pad = pixel_size * 2.0
-            extent.setXMinimum(extent.xMinimum() - pad)
-            extent.setXMaximum(extent.xMaximum() + pad)
-            extent.setYMinimum(extent.yMinimum() - pad)
-            extent.setYMaximum(extent.yMaximum() + pad)
-
-            cols = max(16, int(math.ceil(extent.width() / pixel_size)))
-            rows = max(16, int(math.ceil(extent.height() / pixel_size)))
-
-            output_path = self._new_output_raster_path("sezioni_raster_interpolato")
-            tmp_dir = tempfile.mkdtemp(prefix="profili_sezioni_interp_")
-            tmp_gpkg = os.path.join(tmp_dir, "corridor_inputs.gpkg")
-            tmp_grid = os.path.join(tmp_dir, "corridor_grid.tif")
-
-            try:
-                gdal.UseExceptions()
-                self._write_vector_package([pts_layer, corridor_layer], tmp_gpkg)
-                gdal.Grid(
-                    tmp_grid,
-                    tmp_gpkg,
-                    options=gdal.GridOptions(
-                        format="GTiff",
-                        outputType=gdal.GDT_Float32,
-                        noData=-9999.0,
-                        width=cols,
-                        height=rows,
-                        outputBounds=[
-                            extent.xMinimum(),
-                            extent.yMinimum(),
-                            extent.xMaximum(),
-                            extent.yMaximum(),
-                        ],
-                        layers=["corridor_samples"],
-                        zfield="value",
-                        algorithm="invdist:power=2.0:smoothing=0.0:nodata=-9999.0",
-                        creationOptions=["COMPRESS=LZW"],
-                    ),
-                )
-                gdal.Warp(
-                    output_path,
-                    tmp_grid,
-                    options=gdal.WarpOptions(
-                        format="GTiff",
-                        cutlineDSName=tmp_gpkg,
-                        cutlineLayer="corridor_mask",
-                        cropToCutline=True,
-                        dstNodata=-9999.0,
-                        multithread=True,
-                        creationOptions=["COMPRESS=LZW"],
-                    ),
-                )
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-
-            raster_out = QgsRasterLayer(output_path, raster_title)
-            if not raster_out.isValid():
-                return None, None
-
-            self._style_interpolated_raster_layer(raster_out, min(values), max(values), raster_mode)
-            if group is None:
-                group = self._new_output_group("Sezioni e volumi / Sections and volumes")
-            self._add_output_layer(
-                raster_out,
-                group,
-                "10 Raster interpolato / Interpolated raster",
-            )
-            self.last_interpolated_raster_path = output_path
-            return raster_out, raster_mode
-        except Exception as exc:
-            self._push(
-                "Raster interpolato / Interpolated raster",
-                f"Output opzionale non creato: {exc}",
-                "Warning",
-            )
-            self.last_interpolated_raster_path = None
-            return None, None
 
     def _style_section_polygons(self, layer):
         try:
@@ -1939,6 +418,10 @@ class ProfiliSezioniComuniPlugin:
             self.dialog.btn_add_tinitaly_wcs.clicked.connect(self._add_tinitaly_wcs)
             self.dialog.btn_download_raster.clicked.connect(self._download_raster_area)
             self.dialog.btn_pick_insertion.clicked.connect(self._set_insertion_from_canvas_center)
+            # Tab Confronto
+            self.dialog.btn_refresh_gpkg.clicked.connect(self._refresh_confronto_gpkgs)
+            self.dialog.btn_compare_gpkg.clicked.connect(self._run_gpkg_compare)
+            self.dialog.btn_compare_dtm.clicked.connect(self._run_dtm_compare)
             # Export
             self.dialog.btn_export_csv.clicked.connect(self._export_csv)
             self.dialog.btn_export_vectors.clicked.connect(self._export_vectors)
@@ -1947,6 +430,7 @@ class ProfiliSezioniComuniPlugin:
             self.dialog.btn_print_layout.clicked.connect(self._print_layout)
 
         self.dialog.populate_rasters()
+        self._refresh_confronto_gpkgs()
         self.dialog.show()
         self.dialog.raise_()
 
@@ -2015,14 +499,6 @@ class ProfiliSezioniComuniPlugin:
             )
 
     def _download_raster_area(self):
-        if getattr(self.dialog, "lang", "it") == "en":
-            self._push(
-                "Errore / Error",
-                "TINITALY and HR-DTM-5m only cover Italian territory; "
-                "this download is disabled in English.",
-                "Critical",
-            )
-            return
         area_points = self.dialog._download_area_points
         if not area_points:
             self._push("Errore / Error", "Disegna prima un'area / Draw an area first.", "Critical")
@@ -2042,7 +518,9 @@ class ProfiliSezioniComuniPlugin:
                 "un ritaglio dell'area con GDAL/vsicurl. Continuare?\n\n"
                 "Fonte: {url}\nLicenza: {license}"
             ).format(size=meta.get("size"), url=meta.get("url"), license=meta.get("license"))
-            yes = compat_enum(QMessageBox, "Yes", "StandardButton")
+            yes = getattr(QMessageBox, "Yes", None)
+            if yes is None and hasattr(QMessageBox, "StandardButton"):
+                yes = QMessageBox.StandardButton.Yes
             if QMessageBox.question(self.dialog, "Download HR-DTM-5m", msg) != yes:
                 return
 
@@ -2060,7 +538,7 @@ class ProfiliSezioniComuniPlugin:
                 self._download_progress_callback,
             )
             if layer and layer.isValid():
-                group = self._new_output_group("Raster download / Downloaded raster", priority="raster")
+                group = self._new_output_group("Raster download / Downloaded raster")
                 self._add_output_layer(layer, group, "GeoTIFF")
             layer_msg = " e caricato in QGIS" if layer and layer.isValid() else ""
             self.dialog.lbl_download_status.setText(
@@ -2077,6 +555,179 @@ class ProfiliSezioniComuniPlugin:
         finally:
             self.dialog.progress.setVisible(False)
             self.dialog.progress.setRange(0, 0)
+
+    # ──────────────────────────────────────────────────────────────
+    # Confronto prima/dopo — before/after comparison
+    # ──────────────────────────────────────────────────────────────
+
+    def _refresh_confronto_gpkgs(self):
+        try:
+            gpkg_paths = list_output_gpkgs(self._default_output_dir())
+            self.dialog.populate_confronto_gpkgs(gpkg_paths)
+            self.dialog.lbl_confronto_status.setText(
+                f"{len(gpkg_paths)} GeoPackage trovati in "
+                f"{self._default_output_dir()} / GeoPackages found."
+            )
+        except Exception as e:
+            self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
+
+    def _run_gpkg_compare(self):
+        path_before, path_after = self.dialog.get_confronto_gpkg_paths()
+        if not path_before or not path_after:
+            self._push(
+                "Confronto / Comparison",
+                "Seleziona i GeoPackage prima e dopo / Select before and after GeoPackages.",
+                "Critical",
+            )
+            return
+        if path_before == path_after:
+            self._push(
+                "Confronto / Comparison",
+                "I due GeoPackage coincidono / The two GeoPackages are the same file.",
+                "Warning",
+            )
+            return
+
+        self.dialog.lbl_confronto_status.setText("Confronto in corso... / Comparing...")
+        self.dialog.progress.setVisible(True)
+        QApplication.processEvents()
+        try:
+            before = read_gpkg_summary(path_before)
+            after = read_gpkg_summary(path_after)
+            tolerance = self.dialog.sb_conf_tolerance.value()
+            result = compare_gpkg_summaries(before, after, tolerance)
+
+            chart_html = ""
+            if result["profile_deltas"]:
+                svg = generate_delta_svg(result["profile_deltas"], self.dialog.lang)
+                self.last_svg_content = svg
+                chart_path = self._svg_to_png(svg, "confronto")
+                self.last_chart_png_path = chart_path
+                chart_html = self._chart_image_html(chart_path, svg)
+
+            results_html = generate_compare_html(result, self.dialog.lang, chart_html)
+            self.last_results_html = results_html
+            self.dialog.show_results(results_html)
+            self.dialog.lbl_confronto_status.setText(
+                "Confronto GeoPackage completato / GeoPackage comparison done."
+            )
+            self.dialog.lbl_status.setText(
+                "Confronto prima/dopo completato / Before-after comparison done."
+            )
+        except Exception as e:
+            self._push("Confronto / Comparison", str(e), "Critical")
+            self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
+        finally:
+            self.dialog.progress.setVisible(False)
+
+    def _run_dtm_compare(self):
+        path_before, path_after = self.dialog.get_confronto_dtm_paths()
+        if not path_before or not path_after:
+            self._push(
+                "Confronto DTM / DTM comparison",
+                "Seleziona i DTM prima e dopo / Select before and after DTMs.",
+                "Critical",
+            )
+            return
+        if path_before == path_after:
+            self._push(
+                "Confronto DTM / DTM comparison",
+                "I due DTM coincidono / The two DTMs are the same file.",
+                "Warning",
+            )
+            return
+
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(self._default_output_dir(), f"dtm_diff_{stamp}.tif")
+
+        self.dialog.progress.setRange(0, 100)
+        self.dialog.progress.setValue(0)
+        self.dialog.progress.setVisible(True)
+        self.dialog.lbl_confronto_status.setText(
+            "Calcolo differenza DTM... / Computing DTM difference..."
+        )
+        QApplication.processEvents()
+
+        def _progress(percent=0, message="", **kwargs):
+            self.dialog.progress.setValue(max(0, min(int(percent or 0), 100)))
+            if message:
+                self.dialog.lbl_confronto_status.setText(message)
+            QApplication.processEvents()
+
+        try:
+            threshold = self.dialog.sb_dtm_threshold.value()
+            result = compare_dtm_rasters(
+                path_before, path_after, output_path, threshold, _progress
+            )
+
+            if self.dialog.chk_load_diff_raster.isChecked():
+                layer = self._load_diff_raster(result)
+                if layer:
+                    group = self._new_output_group("Confronto DTM / DTM comparison")
+                    self._add_output_layer(layer, group, "Differenza / Difference")
+
+            results_html = generate_dtm_compare_html(
+                result, path_before, path_after, self.dialog.lang
+            )
+            self.last_results_html = results_html
+            self.dialog.show_results(results_html)
+            self.dialog.lbl_confronto_status.setText(
+                f"Raster differenza salvato / Difference raster saved: {result['diff_path']}"
+            )
+            self._push(
+                "Confronto DTM / DTM comparison",
+                f"Differenza salvata / Difference saved: {result['diff_path']}",
+                "Success",
+            )
+        except Exception as e:
+            QMessageBox.critical(self.dialog, "Confronto DTM / DTM comparison", str(e))
+            self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
+        finally:
+            self.dialog.progress.setVisible(False)
+            self.dialog.progress.setRange(0, 0)
+
+    def _load_diff_raster(self, result):
+        """Load the DoD raster with a diverging ramp: red=cut, blue=fill."""
+        from qgis.core import QgsRasterLayer
+        layer = QgsRasterLayer(result["diff_path"], os.path.basename(result["diff_path"]))
+        if not layer.isValid():
+            return None
+        try:
+            from qgis.PyQt.QtGui import QColor
+            from qgis.core import (
+                QgsColorRampShader,
+                QgsRasterShader,
+                QgsSingleBandPseudoColorRenderer,
+            )
+            abs_max = max(
+                abs(result.get("min_dz") or 0.0),
+                abs(result.get("max_dz") or 0.0),
+                result.get("threshold_m") or 0.05,
+            )
+            threshold = result.get("threshold_m") or 0.05
+            shader_fn = QgsColorRampShader()
+            try:
+                shader_fn.setColorRampType(QgsColorRampShader.Interpolated)
+            except AttributeError:
+                shader_fn.setColorRampType(QgsColorRampShader.Type.Interpolated)
+            items = [
+                QgsColorRampShader.ColorRampItem(-abs_max, QColor("#67001f"), f"{-abs_max:.2f} m"),
+                QgsColorRampShader.ColorRampItem(-threshold, QColor("#f4a582"), f"{-threshold:.2f} m"),
+                QgsColorRampShader.ColorRampItem(0.0, QColor("#f7f7f7"), "0.00 m"),
+                QgsColorRampShader.ColorRampItem(threshold, QColor("#92c5de"), f"{threshold:.2f} m"),
+                QgsColorRampShader.ColorRampItem(abs_max, QColor("#053061"), f"{abs_max:.2f} m"),
+            ]
+            shader_fn.setColorRampItemList(items)
+            shader = QgsRasterShader()
+            shader.setRasterShaderFunction(shader_fn)
+            renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+            renderer.setClassificationMin(-abs_max)
+            renderer.setClassificationMax(abs_max)
+            layer.setRenderer(renderer)
+            layer.triggerRepaint()
+        except Exception:
+            pass
+        return layer
 
     def _set_insertion_from_canvas_center(self):
         center = self.iface.mapCanvas().extent().center()
@@ -2144,6 +795,7 @@ class ProfiliSezioniComuniPlugin:
 
         try:
             if self.current_mode == "sections":
+                self.last_profile_svg = None
                 self._run_sections(points)
             else:
                 self._run_profile(points)
@@ -2171,8 +823,12 @@ class ProfiliSezioniComuniPlugin:
             "You traced a profile. Do you also want to compute cross sections, cut/fill and volumes "
             "using the same axis?"
         )
-        yes = compat_enum(QMessageBox, "Yes", "StandardButton")
-        no = compat_enum(QMessageBox, "No", "StandardButton")
+        yes = getattr(QMessageBox, "Yes", None)
+        no = getattr(QMessageBox, "No", None)
+        if yes is None and hasattr(QMessageBox, "StandardButton"):
+            yes = QMessageBox.StandardButton.Yes
+        if no is None and hasattr(QMessageBox, "StandardButton"):
+            no = QMessageBox.StandardButton.No
         answer = QMessageBox.question(
             self.dialog,
             "Profilo / Profile",
@@ -2202,15 +858,11 @@ class ProfiliSezioniComuniPlugin:
         self.last_cross_sections_data = None
 
         raster_name = raster_layer.name() if raster_layer else ""
-        source_labels = {
-            "provider_openelev": "Open-Elevation API (SRTM/NASA)",
-            "provider_opentopo": "OpenTopoData API (SRTM 90m)",
-            "raster": raster_name or "DEM/DTM",
-        }
-        self.last_interpolated_raster_path = None
         labels = self.dialog.get_parameter_labels()
         svg = generate_profile_svg(points_data, total_dist, source, raster_name, labels)
         self.last_svg_content = svg
+        self.last_profile_svg = svg
+        self.last_sections_svg = None
         chart_path = self._svg_to_png(svg, "profilo")
         self.last_chart_png_path = chart_path
         chart_html = self._chart_image_html(chart_path, svg)
@@ -2224,14 +876,8 @@ class ProfiliSezioniComuniPlugin:
             labels,
             chart_html,
         )
-        vector_layers = self._create_profile_vector_layers(points_data, total_dist, points, chart_path)
-        self.last_report_context = self._build_measurement_context(
-            source_labels.get(source, raster_name or "DEM/DTM"),
-            raster_layer,
-            vector_layers=vector_layers,
-        )
-        results_html = self.last_report_context["html"] + results_html
         self.last_results_html = results_html
+        vector_layers = self._create_profile_vector_layers(points_data, total_dist, points, chart_path)
         try:
             gpkg_path = self._register_vector_outputs(vector_layers, "profilo")
             if gpkg_path:
@@ -2269,7 +915,6 @@ class ProfiliSezioniComuniPlugin:
             f"profilo_asse_{stamp}",
             "memory",
         )
-        self._apply_field_aliases(axis_layer)
         feat_axis = QgsFeature()
         feat_axis.setGeometry(QgsGeometry.fromPolylineXY(axis_points))
         feat_axis.setAttributes([1, float(total_dist or 0), "Asse profilo / Profile axis", chart_path or ""])
@@ -2286,7 +931,6 @@ class ProfiliSezioniComuniPlugin:
             f"profilo_campioni_{stamp}",
             "memory",
         )
-        self._apply_field_aliases(samples_layer)
         feats = []
         for idx, p in enumerate(points_data, 1):
             f = QgsFeature()
@@ -2315,7 +959,6 @@ class ProfiliSezioniComuniPlugin:
             f"profilo_picchetti_{stamp}",
             "memory",
         )
-        self._apply_field_aliases(pickets_layer)
         crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
         try:
             xform = QgsCoordinateTransform(crs_wgs, project.crs(), project.transformContext())
@@ -2379,6 +1022,7 @@ class ProfiliSezioniComuniPlugin:
         project_title = QgsProject.instance().title() or QgsProject.instance().baseName() or "Project"
         created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         self.last_svg_content = generate_cross_sections_svg(data, project_title, created_at)
+        self.last_sections_svg = self.last_svg_content
         chart_path = self._svg_to_png(self.last_svg_content, "sezioni")
         self.last_chart_png_path = chart_path
         chart_html = self._chart_image_html(chart_path, self.last_svg_content)
@@ -2406,32 +1050,7 @@ class ProfiliSezioniComuniPlugin:
         results_html += generate_cross_sections_results_html(data)
         self.last_results_html = results_html
 
-        group = self._new_output_group("Sezioni e volumi / Sections and volumes")
-        self.last_interpolated_raster_path = None
-        vector_layers = self._create_vector_layers(data, points, chart_path, group=group)
-        interpolated_raster, raster_mode = self._create_section_interpolated_raster(
-            data,
-            raster_layer,
-            group=group,
-        )
-        if interpolated_raster and self.last_interpolated_raster_path:
-            raster_label = (
-                "Sterro/Riporto interpolato / Interpolated cut-fill"
-                if raster_mode == "delta" else
-                "Quote interpolate / Interpolated elevations"
-            )
-            results_html += (
-                "<div class='summary-card'><strong>Raster corridoio / Corridor raster:</strong> "
-                f"{raster_label}<br>{self.last_interpolated_raster_path}</div>"
-            )
-            self.last_results_html = results_html
-        self.last_report_context = self._build_measurement_context(
-            raster_layer.name() if raster_layer else "DEM/DTM",
-            raster_layer,
-            vector_layers=vector_layers,
-        )
-        results_html = self.last_report_context["html"] + results_html
-        self.last_results_html = results_html
+        vector_layers = self._create_vector_layers(data, points, chart_path)
         try:
             gpkg_path = self._register_vector_outputs(vector_layers, "sezioni")
             if gpkg_path:
@@ -2464,6 +1083,7 @@ class ProfiliSezioniComuniPlugin:
             return
 
         self.current_mode = "sections"
+        self.last_profile_svg = None
         self.dialog.lbl_status.setText("Calcolo sezioni da layer... / Computing sections from layer...")
         self.dialog.progress.setVisible(True)
         QApplication.processEvents()
@@ -2523,7 +1143,7 @@ class ProfiliSezioniComuniPlugin:
     # Vector layer creation (for cross sections)
     # ──────────────────────────────────────────────────────────────
 
-    def _create_vector_layers(self, data, points, chart_path=None, group=None):
+    def _create_vector_layers(self, data, points, chart_path=None):
         import time
         from qgis.core import (
             QgsVectorLayer, QgsFeature, QgsGeometry,
@@ -2533,9 +1153,8 @@ class ProfiliSezioniComuniPlugin:
         project = QgsProject.instance()
         crs_auth = project.crs().authid() or "EPSG:4326"
         stamp = int(time.time()) % 10000
-        group = group or self._new_output_group("Sezioni e volumi / Sections and volumes")
+        group = self._new_output_group("Sezioni e volumi / Sections and volumes")
         layers = []
-        popup_layers = []
 
         # Axis layer
         vl_asse = QgsVectorLayer(
@@ -2543,7 +1162,6 @@ class ProfiliSezioniComuniPlugin:
             f"&field=label:string(80)&field=chart_png:string(254)",
             f"Asse {stamp}", "memory"
         )
-        self._apply_field_aliases(vl_asse)
         pr_asse = vl_asse.dataProvider()
         feat_asse = QgsFeature()
         feat_asse.setGeometry(QgsGeometry.fromPolylineXY(points))
@@ -2575,7 +1193,6 @@ class ProfiliSezioniComuniPlugin:
                 f"&field=label:string(80)&field=chart_png:string(254)",
                 f"Curve {stamp}", "memory"
             )
-            self._apply_field_aliases(vl_curve)
             pr_c = vl_curve.dataProvider()
             feats_c = []
             for c in curves:
@@ -2595,7 +1212,7 @@ class ProfiliSezioniComuniPlugin:
                 pr_c.addFeatures(feats_c)
                 vl_curve.updateExtents()
                 self._style_marker_layer(vl_curve, "#f97316", 3.0, "label")
-                self._add_output_layer(vl_curve, group, "06 Curve / Curves")
+                self._add_output_layer(vl_curve, group, "05 Curve / Curves")
                 layers.append(vl_curve)
 
         # Cross section lines
@@ -2606,7 +1223,6 @@ class ProfiliSezioniComuniPlugin:
             f"&field=label:string(80)&field=colore:string(16)&field=chart_png:string(254)",
             f"Sezioni {stamp}", "memory"
         )
-        self._apply_field_aliases(vl_sez)
         pr_sez = vl_sez.dataProvider()
 
         vl_pts = QgsVectorLayer(
@@ -2615,7 +1231,6 @@ class ProfiliSezioniComuniPlugin:
             f"&field=chart_png:string(254)",
             f"Punti Sezione {stamp}", "memory"
         )
-        self._apply_field_aliases(vl_pts)
         pr_pts = vl_pts.dataProvider()
 
         vl_centers = QgsVectorLayer(
@@ -2625,29 +1240,15 @@ class ProfiliSezioniComuniPlugin:
             f"&field=label:string(80)&field=chart_png:string(254)",
             f"Centri Sezione {stamp}", "memory"
         )
-        self._apply_field_aliases(vl_centers)
         pr_centers = vl_centers.dataProvider()
-
-        vl_labels = QgsVectorLayer(
-            f"Point?crs={crs_auth}&field=sezione:integer&field=prog_m:double"
-            f"&field=label:string(80)&field=chart_png:string(254)",
-            f"Etichette Sezione {stamp}", "memory"
-        )
-        self._apply_field_aliases(vl_labels)
-        pr_labels = vl_labels.dataProvider()
 
         feats_sez = []
         feats_pts = []
         feats_centers = []
-        feats_labels = []
         for sec in data.get("sections", []):
             pts_sec = sec.get("points", [])
             if not pts_sec:
                 continue
-            label_text = "S{0:02d} {1:.1f} m".format(
-                int(sec.get("index") or 0),
-                float(sec.get("progressive_m") or 0),
-            )
             center_lon = sec.get("center_lon")
             center_lat = sec.get("center_lat")
             if center_lon is not None and center_lat is not None:
@@ -2663,19 +1264,13 @@ class ProfiliSezioniComuniPlugin:
                     sec.get("area_m2") or 0.0,
                     sec.get("cut_area_m2") or 0.0,
                     sec.get("fill_area_m2") or 0.0,
-                    label_text,
+                    "S{0:02d} {1:.1f} m".format(
+                        int(sec.get("index") or 0),
+                        float(sec.get("progressive_m") or 0),
+                    ),
                     chart_path or "",
                 ])
                 feats_centers.append(f_center)
-                f_label = QgsFeature()
-                f_label.setGeometry(QgsGeometry.fromPointXY(center_pt))
-                f_label.setAttributes([
-                    sec.get("index"),
-                    sec.get("progressive_m"),
-                    label_text,
-                    chart_path or "",
-                ])
-                feats_labels.append(f_label)
             line_pts = []
             for p in pts_sec:
                 lon, lat = p.get("lon"), p.get("lat")
@@ -2703,7 +1298,10 @@ class ProfiliSezioniComuniPlugin:
                     sec.get("cut_area_m2") or 0.0,
                     sec.get("fill_area_m2") or 0.0,
                     sec.get("design_elevation"),
-                    label_text,
+                    "S{0:02d} {1:.1f} m".format(
+                        int(sec.get("index") or 0),
+                        float(sec.get("progressive_m") or 0),
+                    ),
                     "#4f73c4",
                     chart_path or "",
                 ])
@@ -2712,30 +1310,21 @@ class ProfiliSezioniComuniPlugin:
         if feats_sez:
             pr_sez.addFeatures(feats_sez)
             vl_sez.updateExtents()
-            self._style_line_layer(vl_sez, "#4f73c4", 0.65)
+            self._style_line_layer(vl_sez, "#4f73c4", 0.65, "label")
             self._add_output_layer(vl_sez, group, "02 Sezioni planimetriche / Planimetric sections")
             layers.append(vl_sez)
-            popup_layers.append(vl_sez)
         if feats_pts:
             pr_pts.addFeatures(feats_pts)
             vl_pts.updateExtents()
             self._style_marker_layer(vl_pts, "#8ba3c7", 1.4)
             self._add_output_layer(vl_pts, group, "03 Punti sezione / Section points")
             layers.append(vl_pts)
-        if feats_labels:
-            pr_labels.addFeatures(feats_labels)
-            vl_labels.updateExtents()
-            self._style_section_label_layer(vl_labels)
-            self._add_output_layer(vl_labels, group, "04 Etichette sezione / Section labels")
-            layers.append(vl_labels)
-            popup_layers.append(vl_labels)
         if feats_centers:
             pr_centers.addFeatures(feats_centers)
             vl_centers.updateExtents()
-            self._style_marker_layer(vl_centers, "#ffffff", 2.6)
-            self._add_output_layer(vl_centers, group, "05 Centri sezione / Section centers")
+            self._style_marker_layer(vl_centers, "#ffffff", 2.6, "label")
+            self._add_output_layer(vl_centers, group, "04 Centri sezione / Section centers")
             layers.append(vl_centers)
-            popup_layers.append(vl_centers)
 
         vl_vol = QgsVectorLayer(
             f"LineString?crs={crs_auth}&field=da_sez:integer&field=a_sez:integer"
@@ -2745,7 +1334,6 @@ class ProfiliSezioniComuniPlugin:
             f"Tratte Volumi {stamp}",
             "memory",
         )
-        self._apply_field_aliases(vl_vol)
         pr_vol = vl_vol.dataProvider()
         sections_by_index = {s.get("index"): s for s in data.get("sections", [])}
         feats_vol = []
@@ -2781,14 +1369,10 @@ class ProfiliSezioniComuniPlugin:
             pr_vol.addFeatures(feats_vol)
             vl_vol.updateExtents()
             self._style_line_layer(vl_vol, "#a78bfa", 0.75, "label")
-            self._add_output_layer(vl_vol, group, "07 Volumi / Volumes")
+            self._add_output_layer(vl_vol, group, "06 Volumi / Volumes")
             layers.append(vl_vol)
 
-        drawing_layers = self._create_section_drawing_layers(data, stamp, chart_path, group)
-        layers.extend(drawing_layers)
-        popup_layers.extend(drawing_layers)
-        for section_layer in popup_layers:
-            self._connect_section_popup(section_layer)
+        layers.extend(self._create_section_drawing_layers(data, stamp, chart_path, group))
         return layers
 
     def _create_section_drawing_layers(self, data, stamp, chart_path=None, group=None):
@@ -2836,8 +1420,6 @@ class ProfiliSezioniComuniPlugin:
             f"Disegni Sezioni Sterro Riporto {stamp}",
             "memory",
         )
-        self._apply_field_aliases(vl_lines)
-        self._apply_field_aliases(vl_poly)
         pr_lines = vl_lines.dataProvider()
         pr_poly = vl_poly.dataProvider()
         line_features = []
@@ -2946,7 +1528,7 @@ class ProfiliSezioniComuniPlugin:
             vl_lines.updateExtents()
             self._style_section_lines(vl_lines)
             if group:
-                self._add_output_layer(vl_lines, group, "08 Disegni tecnici / Technical drawings")
+                self._add_output_layer(vl_lines, group, "07 Disegni tecnici / Technical drawings")
             else:
                 project.addMapLayer(vl_lines)
             layers.append(vl_lines)
@@ -2955,7 +1537,7 @@ class ProfiliSezioniComuniPlugin:
             vl_poly.updateExtents()
             self._style_section_polygons(vl_poly)
             if group:
-                self._add_output_layer(vl_poly, group, "09 Sterro riporto / Cut fill")
+                self._add_output_layer(vl_poly, group, "08 Sterro riporto / Cut fill")
             else:
                 project.addMapLayer(vl_poly)
             layers.append(vl_poly)
@@ -3009,14 +1591,30 @@ class ProfiliSezioniComuniPlugin:
         if not file_path:
             return
         try:
-            image = self._render_svg_to_image(
-                self.last_svg_content,
-                fallback_size=(1600, 1040),
-                scale=(300 / 96.0),
-                background="#0a0c10",
-            )
-            if not image.save(file_path, "PNG"):
-                raise IOError(f"Impossibile salvare il PNG: {file_path}")
+            from qgis.PyQt.QtCore import QByteArray, QSize as QtSize
+            from qgis.PyQt.QtGui import QImage, QPainter, QColor
+            from qgis.PyQt.QtSvg import QSvgRenderer
+
+            renderer = QSvgRenderer(QByteArray(self.last_svg_content.encode("utf-8")))
+            default_size = renderer.defaultSize()
+            if default_size.isEmpty():
+                default_size = QtSize(1600, 1040)
+            scale = 300 / 96.0
+            w = int(default_size.width() * scale)
+            h = int(default_size.height() * scale)
+            image = QImage(w, h, QImage.Format_ARGB32 if hasattr(QImage, "Format_ARGB32")
+                           else 5)
+            image.fill(QColor("#0a0c10"))
+            painter = QPainter(image)
+            try:
+                painter.setRenderHint(
+                    QPainter.Antialiasing if hasattr(QPainter, "Antialiasing") else 1
+                )
+            except Exception:
+                pass
+            renderer.render(painter)
+            painter.end()
+            image.save(file_path, "PNG")
             self._push("Successo / Success", f"PNG salvato / PNG saved: {file_path}", "Success")
         except Exception as e:
             QMessageBox.critical(self.dialog, "Errore / Error", str(e))
@@ -3037,15 +1635,13 @@ class ProfiliSezioniComuniPlugin:
         if not file_path:
             return
         try:
-            saved_path = self._render_layout_to_pdf(self._last_drawn_points, self.last_svg_content, file_path)
+            saved_path = self._render_layout_to_pdf(self._last_drawn_points, file_path)
             self._push("Successo / Success", f"PDF salvato / PDF saved: {saved_path}", "Success")
         except Exception as e:
             QMessageBox.critical(self.dialog, "Errore / Error", str(e))
 
-    def _render_layout_to_pdf(self, points, svg_content, output_path):
-        from qgis.core import (
-            QgsLayoutExporter,
-        )
+    def _render_layout_to_pdf(self, points, output_path):
+        from qgis.core import QgsLayoutExporter
 
         if not output_path.lower().endswith(".pdf"):
             output_path += ".pdf"
@@ -3053,39 +1649,352 @@ class ProfiliSezioniComuniPlugin:
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
-        tmp_dir = tempfile.mkdtemp(prefix="profili_sezioni_pdf_")
+        layout = self._build_cartographic_layout(
+            f"ProfiliSezioni_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
+            points,
+        )
+        exporter = QgsLayoutExporter(layout)
+        settings = QgsLayoutExporter.PdfExportSettings()
+        settings.appendGeoreference = True
+        if hasattr(settings, "dpi"):
+            settings.dpi = 300
+        if hasattr(settings, "forceVectorOutput"):
+            settings.forceVectorOutput = True
+        if hasattr(settings, "simplifyGeometries"):
+            settings.simplifyGeometries = True
+        if hasattr(settings, "exportMetadata"):
+            settings.exportMetadata = True
+
+        result = exporter.exportToPdf(output_path, settings)
+        if result != QgsLayoutExporter.Success:
+            raise Exception(f"Errore durante l'esportazione PDF: {result}")
+        if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+            raise Exception("Errore durante l'esportazione PDF: file non creato o vuoto.")
+        return output_path
+
+    # ──────────────────────────────────────────────────────────────
+    # Cartographic layout building blocks
+    # ──────────────────────────────────────────────────────────────
+
+    LAYER_TYPE_LABELS = (
+        ("profilo_asse", "Asse profilo / Profile axis"),
+        ("profilo_campioni", "Campioni profilo / Profile samples"),
+        ("profilo_picchetti", "Picchetti / Pickets"),
+        ("disegni sezioni sterro riporto", "Sterro e riporto / Cut and fill"),
+        ("disegni sezioni linee", "Disegni tecnici sezioni / Section drawings"),
+        ("punti sezione", "Punti sezione / Section points"),
+        ("centri sezione", "Centri sezione / Section centers"),
+        ("tratte volumi", "Tratte volumi / Volume segments"),
+        ("sezioni", "Sezioni planimetriche / Planimetric sections"),
+        ("curve", "Curve / Curves"),
+        ("asse", "Asse / Alignment"),
+    )
+
+    def _layer_type_label(self, layer_name):
+        low = layer_name.lower()
+        for prefix, label in self.LAYER_TYPE_LABELS:
+            if low.startswith(prefix):
+                return label
+        return layer_name
+
+    def _unique_layers_by_type(self):
+        """Return last output layers deduplicated by typology: [(layer, label)]."""
+        seen = set()
+        unique = []
+        for layer in self.last_vector_layers:
+            if not layer or not layer.isValid():
+                continue
+            label = self._layer_type_label(layer.name())
+            if label in seen:
+                continue
+            seen.add(label)
+            unique.append((layer, label))
+        return unique
+
+    def _layers_by_prefix(self, prefixes):
+        found = []
+        for layer in self.last_vector_layers:
+            if not layer or not layer.isValid():
+                continue
+            low = layer.name().lower()
+            if any(low.startswith(p) for p in prefixes):
+                found.append(layer)
+        return found
+
+    def _collect_print_charts(self):
+        """One entry per available chart, each printed on its own sheet."""
+        charts = []
+        if self.last_profile_svg:
+            charts.append({
+                "svg": self.last_profile_svg,
+                "title": "Profilo altimetrico / Elevation profile",
+                "layers": self._layers_by_prefix(("profilo_picchetti",)),
+            })
+        if self.last_sections_svg:
+            charts.append({
+                "svg": self.last_sections_svg,
+                "title": "Sezioni trasversali e volumi / Cross sections and volumes",
+                "layers": self._layers_by_prefix(("centri sezione", "tratte volumi")),
+            })
+        return charts
+
+    @staticmethod
+    def _nice_grid_interval(span):
+        import math
+        raw = max(span / 5.0, 1e-9)
+        magnitude = 10 ** math.floor(math.log10(raw))
+        for mult in (1, 2, 5, 10):
+            if raw <= mult * magnitude:
+                return mult * magnitude
+        return 10 * magnitude
+
+    def _write_chart_svg(self, svg_content, name):
+        chart_dir = os.path.join(self._default_output_dir(), "_charts")
+        os.makedirs(chart_dir, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = os.path.join(chart_dir, f"{name}_{stamp}.svg")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(svg_content)
+        return path
+
+    def _build_cartographic_layout(self, layout_name, points):
+        """A3 landscape layout: map with grid, scale bar, per-typology legend,
+        title block with chart thumbnails, plus one sheet per chart with its
+        attribute table."""
+        from qgis.PyQt.QtGui import QColor, QFont
+        from qgis.core import (
+            QgsGeometry, QgsLayoutItemLabel, QgsLayoutItemLegend,
+            QgsLayoutItemMap, QgsLayoutItemPage, QgsLayoutItemPicture,
+            QgsLayoutItemScaleBar, QgsLayoutItemShape, QgsLayoutPoint,
+            QgsLayoutSize, QgsPrintLayout, QgsUnitTypes,
+        )
+
+        project = QgsProject.instance()
+        mm = QgsUnitTypes.LayoutMillimeters
+        layout = QgsPrintLayout(project)
+        layout.initializeDefaults()
+        layout.setName(layout_name)
+
+        page = layout.pageCollection().pages()[0]
+        page.setPageSize(QgsLayoutSize(420, 297, mm))
+
+        # ── Map with buffered extent ──
+        geom = QgsGeometry.fromPolylineXY(points)
+        extent = geom.boundingBox()
+        buf = 500 / 111320.0 if project.crs().isGeographic() else 500
+        extent.setXMinimum(extent.xMinimum() - buf)
+        extent.setXMaximum(extent.xMaximum() + buf)
+        extent.setYMinimum(extent.yMinimum() - buf)
+        extent.setYMaximum(extent.yMaximum() + buf)
+
+        map_item = QgsLayoutItemMap(layout)
+        map_item.attemptMove(QgsLayoutPoint(10, 10, mm))
+        map_item.attemptResize(QgsLayoutSize(280, 195, mm))
+        map_item.setExtent(extent)
+        layout.addLayoutItem(map_item)
         try:
-            svg_path = os.path.join(tmp_dir, "chart.svg")
-            with open(svg_path, "w", encoding="utf-8") as f:
-                f.write(svg_content)
-            layout = self._create_report_layout(
-                points,
-                svg_content,
-                f"ProfiliSezioni_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
-                svg_path,
-                add_to_project=False,
-            )
+            layout.setReferenceMap(map_item)
+        except Exception:
+            pass
 
-            exporter = QgsLayoutExporter(layout)
-            settings = QgsLayoutExporter.PdfExportSettings()
-            settings.appendGeoreference = True
-            if hasattr(settings, "dpi"):
-                settings.dpi = 300
-            if hasattr(settings, "forceVectorOutput"):
-                settings.forceVectorOutput = True
-            if hasattr(settings, "simplifyGeometries"):
-                settings.simplifyGeometries = True
-            if hasattr(settings, "exportMetadata"):
-                settings.exportMetadata = True
+        # ── Grid (reticolo) with coordinate annotations ──
+        try:
+            from qgis.core import QgsLayoutItemMapGrid
+            grid = map_item.grid()
+            grid.setEnabled(True)
+            interval = self._nice_grid_interval(max(extent.width(), extent.height()))
+            grid.setIntervalX(interval)
+            grid.setIntervalY(interval)
+            try:
+                grid.setStyle(QgsLayoutItemMapGrid.Solid)
+            except AttributeError:
+                grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
+            try:
+                grid.setFrameStyle(QgsLayoutItemMapGrid.Zebra)
+            except AttributeError:
+                grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
+            grid.setFrameWidth(2.0)
+            grid.setAnnotationEnabled(True)
+            grid.setAnnotationPrecision(3 if project.crs().isGeographic() else 0)
+            try:
+                pen = grid.pen()
+                pen.setColor(QColor(120, 130, 150, 110))
+                pen.setWidthF(0.15)
+                grid.setPen(pen)
+            except Exception:
+                pass
+            map_item.updateBoundingRect()
+        except Exception:
+            pass
 
-            result = exporter.exportToPdf(output_path, settings)
-            if result != compat_enum(QgsLayoutExporter, "Success", "ExportResult"):
-                raise Exception(f"Errore durante l'esportazione PDF: {result}")
-            if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
-                raise Exception("Errore durante l'esportazione PDF: file non creato o vuoto.")
-            return output_path
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        # ── Scale bar ──
+        try:
+            scalebar = QgsLayoutItemScaleBar(layout)
+            scalebar.setStyle("Single Box")
+            scalebar.setLinkedMap(map_item)
+            try:
+                scalebar.applyDefaultSettings()
+            except Exception:
+                pass
+            try:
+                scalebar.applyDefaultSize()
+            except Exception:
+                pass
+            layout.addLayoutItem(scalebar)
+            scalebar.attemptMove(QgsLayoutPoint(12, 212, mm))
+        except Exception:
+            pass
+
+        # ── Legend: each typology once ──
+        try:
+            legend = QgsLayoutItemLegend(layout)
+            legend.setTitle("Legenda / Legend")
+            legend.setLinkedMap(map_item)
+            legend.setAutoUpdateModel(False)
+            root = legend.model().rootGroup()
+            try:
+                root.removeAllChildren()
+            except AttributeError:
+                for child in list(root.children()):
+                    root.removeChildNode(child)
+            for layer, label in self._unique_layers_by_type():
+                node = root.addLayer(layer)
+                if node:
+                    node.setName(label)
+            layout.addLayoutItem(legend)
+            legend.attemptMove(QgsLayoutPoint(295, 10, mm))
+            try:
+                legend.adjustBoxSize()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # ── Title block (cartiglio) with small charts ──
+        charts = self._collect_print_charts()
+        try:
+            try:
+                shape_type = QgsLayoutItemShape.Rectangle
+            except AttributeError:
+                shape_type = QgsLayoutItemShape.Shape.Rectangle
+            cartiglio = QgsLayoutItemShape(layout)
+            cartiglio.setShapeType(shape_type)
+            layout.addLayoutItem(cartiglio)
+            cartiglio.attemptMove(QgsLayoutPoint(10, 240, mm))
+            cartiglio.attemptResize(QgsLayoutSize(400, 50, mm))
+        except Exception:
+            pass
+
+        def _label(text, x, y, w, h, size=10, bold=False):
+            item = QgsLayoutItemLabel(layout)
+            item.setText(text)
+            font = QFont("Arial", size)
+            font.setBold(bold)
+            try:
+                item.setFont(font)
+            except Exception:
+                try:
+                    fmt = item.textFormat()
+                    fmt.setFont(font)
+                    fmt.setSize(size)
+                    item.setTextFormat(fmt)
+                except Exception:
+                    pass
+            layout.addLayoutItem(item)
+            item.attemptMove(QgsLayoutPoint(x, y, mm))
+            item.attemptResize(QgsLayoutSize(w, h, mm))
+            return item
+
+        title = project.title() or project.baseName() or "Profili, Sezioni e Comuni"
+        created = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        try:
+            scale_txt = f"1:{int(round(map_item.scale())):,}".replace(",", ".")
+        except Exception:
+            scale_txt = "n/d"
+        _label(title, 14, 243, 170, 9, size=14, bold=True)
+        _label("Profili, Sezioni e Comuni — Dott. Sarino Alfonso Grande", 14, 253, 170, 6, size=9)
+        _label(f"Data / Date: {created}", 14, 260, 170, 6, size=9)
+        _label(f"CRS: {project.crs().authid()}   ·   Scala / Scale: {scale_txt}", 14, 267, 170, 6, size=9)
+        _label(
+            "Quote indicative — non idonee a progettazione strutturale / "
+            "Indicative elevations — not for structural design",
+            14, 274, 190, 10, size=8,
+        )
+
+        # small chart thumbnails inside the title block
+        thumb_x = 210
+        for chart in charts[:2]:
+            try:
+                svg_path = self._write_chart_svg(chart["svg"], "cartiglio")
+                thumb = QgsLayoutItemPicture(layout)
+                thumb.setPicturePath(svg_path)
+                try:
+                    thumb.setResizeMode(QgsLayoutItemPicture.Zoom)
+                except AttributeError:
+                    thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
+                layout.addLayoutItem(thumb)
+                thumb.attemptMove(QgsLayoutPoint(thumb_x, 242, mm))
+                thumb.attemptResize(QgsLayoutSize(96, 46, mm))
+                thumb_x += 100
+            except Exception:
+                pass
+
+        # ── One sheet per chart, with its attribute tables ──
+        for page_idx, chart in enumerate(charts, start=1):
+            try:
+                extra_page = QgsLayoutItemPage(layout)
+                extra_page.setPageSize(QgsLayoutSize(420, 297, mm))
+                layout.pageCollection().addPage(extra_page)
+            except Exception:
+                break
+
+            title_item = _label(chart["title"], 10, 10, 400, 10, size=14, bold=True)
+            try:
+                title_item.attemptMove(QgsLayoutPoint(10, 10, mm), True, False, page_idx)
+            except Exception:
+                pass
+
+            try:
+                svg_path = self._write_chart_svg(chart["svg"], "foglio")
+                pic = QgsLayoutItemPicture(layout)
+                pic.setPicturePath(svg_path)
+                try:
+                    pic.setResizeMode(QgsLayoutItemPicture.Zoom)
+                except AttributeError:
+                    pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
+                layout.addLayoutItem(pic)
+                pic.attemptMove(QgsLayoutPoint(10, 22, mm), True, False, page_idx)
+                pic.attemptResize(QgsLayoutSize(400, 150, mm))
+            except Exception:
+                pass
+
+            table_layers = chart.get("layers") or []
+            table_x = 10
+            table_w = 400 if len(table_layers) < 2 else 197
+            for table_layer in table_layers[:2]:
+                try:
+                    from qgis.core import QgsLayoutFrame, QgsLayoutItemAttributeTable
+                    table = QgsLayoutItemAttributeTable(layout)
+                    layout.addMultiFrame(table)
+                    table.setVectorLayer(table_layer)
+                    table.setMaximumNumberOfFeatures(60)
+                    try:
+                        fields = [
+                            f.name() for f in table_layer.fields()
+                            if f.name() not in ("chart_png", "colore")
+                        ]
+                        table.setDisplayedFields(fields)
+                    except Exception:
+                        pass
+                    frame = QgsLayoutFrame(layout, table)
+                    frame.attemptResize(QgsLayoutSize(table_w, 108, mm))
+                    table.addFrame(frame)
+                    frame.attemptMove(QgsLayoutPoint(table_x, 178, mm), True, False, page_idx)
+                    table_x += table_w + 6
+                except Exception:
+                    pass
+
+        return layout
 
     # ──────────────────────────────────────────────────────────────
     # Export CSV
@@ -3161,24 +2070,20 @@ class ProfiliSezioniComuniPlugin:
             return
 
         points = self._last_drawn_points
-
-        if self.current_mode == "sections" and self.last_svg_content:
-            self._layout_svg(points, self.last_svg_content, "Cross Sections / Sezioni Trasversali")
-        elif self.last_svg_content:
-            self._layout_svg(points, self.last_svg_content, "Elevation Profile / Profilo Altimetrico")
-        else:
+        if not self.last_svg_content:
             self._push("Errore / Error", "Nessun risultato da stampare / Nothing to print.", "Critical")
+            return
 
-    def _layout_svg(self, points, svg_content, layout_name):
-        svg_path = self._persist_svg_chart(svg_content, "layout_chart")
-        if not svg_path:
-            raise RuntimeError("Impossibile preparare il grafico per il layout.")
-        layout = self._create_report_layout(
-            points,
-            svg_content,
-            layout_name,
-            svg_path,
-            add_to_project=True,
+        layout_name = (
+            "Cross Sections / Sezioni Trasversali"
+            if self.current_mode == "sections"
+            else "Elevation Profile / Profilo Altimetrico"
         )
+        project = QgsProject.instance()
+        for layout in project.layoutManager().printLayouts():
+            if layout.name() == layout_name:
+                project.layoutManager().removeLayout(layout)
 
+        layout = self._build_cartographic_layout(layout_name, points)
+        project.layoutManager().addLayout(layout)
         self.iface.openLayoutDesigner(layout)
