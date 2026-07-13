@@ -253,18 +253,11 @@ class ProfiliSezioniComuniPlugin:
             image = QImage(
                 width,
                 height,
-                (
-                    QImage.Format_ARGB32
-                    if hasattr(QImage, "Format_ARGB32")
-                    else 5
-                ),
+                QImage.Format.Format_ARGB32,
             )
             image.fill(QColor("#12151e"))
             painter = QPainter(image)
-            try:
-                painter.setRenderHint(QPainter.Antialiasing)
-            except Exception:
-                pass
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             renderer.render(painter)
             painter.end()
             chart_dir = os.path.join(self._default_output_dir(), "_charts")
@@ -2292,22 +2285,11 @@ class ProfiliSezioniComuniPlugin:
             image = QImage(
                 w,
                 h,
-                (
-                    QImage.Format_ARGB32
-                    if hasattr(QImage, "Format_ARGB32")
-                    else 5
-                ),
+                QImage.Format.Format_ARGB32,
             )
             image.fill(QColor("#0a0c10"))
             painter = QPainter(image)
-            try:
-                painter.setRenderHint(
-                    QPainter.Antialiasing
-                    if hasattr(QPainter, "Antialiasing")
-                    else 1
-                )
-            except Exception:
-                pass
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             renderer.render(painter)
             painter.end()
             image.save(file_path, "PNG")

@@ -984,10 +984,7 @@ class ProfiliSezioniComuniDialog(QDialog):
         main_layout.addLayout(header_row)
 
         sep = QFrame()
-        try:
-            sep.setFrameShape(QFrame.Shape.HLine)
-        except AttributeError:
-            sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShape(QFrame.Shape.HLine)
         sep.setObjectName("Separator")
         main_layout.addWidget(sep)
 
