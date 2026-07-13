@@ -70,7 +70,7 @@ def _fetch_open_elevation(points_wgs84):
     """Open-Elevation API — max 80 pts per chunk."""
     values = []
     for start in range(0, len(points_wgs84), 80):
-        chunk = points_wgs84[start : start + 80]
+        chunk = points_wgs84[start:start + 80]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
         query = urllib.parse.urlencode({"locations": locs})
         url = f"https://api.open-elevation.com/api/v1/lookup?{query}"
@@ -95,7 +95,7 @@ def _fetch_opentopo(points_wgs84):
     values = []
     chunk_size = 100
     for start in range(0, len(points_wgs84), chunk_size):
-        chunk = points_wgs84[start : start + chunk_size]
+        chunk = points_wgs84[start:start + chunk_size]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
         query = urllib.parse.urlencode({"locations": locs})
         url = f"https://api.opentopodata.org/v1/srtm90m?{query}"
