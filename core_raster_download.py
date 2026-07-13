@@ -596,7 +596,7 @@ def create_download_area_layer(area_points, layer_name="Area download raster"):
             }
         )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
     project.addMapLayer(vl)

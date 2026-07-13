@@ -185,7 +185,7 @@ def calculate_cross_sections(
             raw_nodata = method(band)
             if raw_nodata is not None:
                 nodata_values.add(float(raw_nodata))
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     def _sample_elevation(lon, lat):
@@ -201,7 +201,7 @@ def calculate_cross_sections(
                     if math.isclose(value, nodata, rel_tol=0.0, abs_tol=1e-9):
                         return None
                 return value
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         return None
 
@@ -768,7 +768,7 @@ def generate_cross_sections_html(data):
                     f' stroke="#f59e0b" stroke-width="1" stroke-dasharray="3 '
                     f'2"/>'
                 )
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         svgs += f"""
         <div style="flex-shrink:0;text-align:center;width:120px;">
@@ -980,7 +980,7 @@ def generate_cross_sections_results_html(data):
                         f' stroke="#f59e0b" stroke-width="1" '
                         f'stroke-dasharray="3 2"/>'
                     )
-            except Exception:
+            except Exception:  # nosec B110
                 pass
         html += f"""
         <div class="section-card">

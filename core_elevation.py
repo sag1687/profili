@@ -202,7 +202,7 @@ def _raster_nodata_values(provider, band):
             raw = method(band)
             if raw is not None:
                 values.add(float(raw))
-        except Exception:
+        except Exception:  # nosec B110
             pass
     return values
 

@@ -374,7 +374,7 @@ class ProfiliSezioniComuniPlugin:
             layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
             layer.setLabelsEnabled(True)
             layer.triggerRepaint()
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     def _style_line_layer(self, layer, color, width=0.7, label_field=None):
@@ -391,7 +391,7 @@ class ProfiliSezioniComuniPlugin:
             if label_field:
                 self._enable_labels(layer, label_field)
             layer.triggerRepaint()
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     def _style_marker_layer(self, layer, color, size=2.2, label_field=None):
@@ -411,7 +411,7 @@ class ProfiliSezioniComuniPlugin:
             if label_field:
                 self._enable_labels(layer, label_field)
             layer.triggerRepaint()
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     def _style_section_polygons(self, layer):
@@ -444,7 +444,7 @@ class ProfiliSezioniComuniPlugin:
             layer.setRenderer(QgsCategorizedSymbolRenderer("tipo", categories))
             self._enable_labels(layer, "label", "#f1f5f9", 7)
             layer.triggerRepaint()
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     def _style_section_lines(self, layer):
@@ -1043,7 +1043,7 @@ class ProfiliSezioniComuniPlugin:
             renderer.setClassificationMax(abs_max)
             layer.setRenderer(renderer)
             layer.triggerRepaint()
-        except Exception:
+        except Exception:  # nosec B110
             pass
         return layer
 
@@ -1380,7 +1380,7 @@ class ProfiliSezioniComuniPlugin:
                 try:
                     center = self.iface.mapCanvas().extent().center()
                     diag_x, diag_y = center.x(), center.y()
-                except Exception:
+                except Exception:  # nosec B110
                     pass
             diag_origin = QgsPointXY(diag_x, diag_y)
 
@@ -1925,7 +1925,7 @@ class ProfiliSezioniComuniPlugin:
             try:
                 center = self.iface.mapCanvas().extent().center()
                 origin_x, origin_y = center.x(), center.y()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
         sections = data.get("sections") or []
@@ -2511,7 +2511,7 @@ class ProfiliSezioniComuniPlugin:
         layout.addLayoutItem(map_item)
         try:
             layout.setReferenceMap(map_item)
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
         # ── Grid (reticolo) with coordinate annotations ──
@@ -2543,10 +2543,10 @@ class ProfiliSezioniComuniPlugin:
                 pen.setColor(QColor(120, 130, 150, 110))
                 pen.setWidthF(0.15)
                 grid.setPen(pen)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             map_item.updateBoundingRect()
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
         # ── Scale bar ──
@@ -2556,15 +2556,15 @@ class ProfiliSezioniComuniPlugin:
             scalebar.setLinkedMap(map_item)
             try:
                 scalebar.applyDefaultSettings()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             try:
                 scalebar.applyDefaultSize()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
             layout.addLayoutItem(scalebar)
             scalebar.attemptMove(QgsLayoutPoint(12, 212, mm))
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
         # ── Legend: each typology once ──
@@ -2587,9 +2587,9 @@ class ProfiliSezioniComuniPlugin:
             legend.attemptMove(QgsLayoutPoint(295, 10, mm))
             try:
                 legend.adjustBoxSize()
-            except Exception:
+            except Exception:  # nosec B110
                 pass
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
         # ── Title block (cartiglio) with small charts ──
@@ -2604,7 +2604,7 @@ class ProfiliSezioniComuniPlugin:
             layout.addLayoutItem(cartiglio)
             cartiglio.attemptMove(QgsLayoutPoint(10, 240, mm))
             cartiglio.attemptResize(QgsLayoutSize(400, 50, mm))
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
         def _label(text, x, y, w, h, size=10, bold=False):
@@ -2620,7 +2620,7 @@ class ProfiliSezioniComuniPlugin:
                     fmt.setFont(font)
                     fmt.setSize(size)
                     item.setTextFormat(fmt)
-                except Exception:
+                except Exception:  # nosec B110
                     pass
             layout.addLayoutItem(item)
             item.attemptMove(QgsLayoutPoint(x, y, mm))
@@ -2680,7 +2680,7 @@ class ProfiliSezioniComuniPlugin:
                 thumb.attemptMove(QgsLayoutPoint(thumb_x, 242, mm))
                 thumb.attemptResize(QgsLayoutSize(96, 46, mm))
                 thumb_x += 100
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
         # ── One sheet per chart, with its attribute tables ──
@@ -2699,7 +2699,7 @@ class ProfiliSezioniComuniPlugin:
                 title_item.attemptMove(
                     QgsLayoutPoint(10, 10, mm), True, False, page_idx
                 )
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
             try:
@@ -2715,7 +2715,7 @@ class ProfiliSezioniComuniPlugin:
                     QgsLayoutPoint(10, 22, mm), True, False, page_idx
                 )
                 pic.attemptResize(QgsLayoutSize(400, 150, mm))
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
             table_layers = chart.get("layers") or []
@@ -2739,7 +2739,7 @@ class ProfiliSezioniComuniPlugin:
                             if f.name() not in ("chart_png", "colore")
                         ]
                         table.setDisplayedFields(fields)
-                    except Exception:
+                    except Exception:  # nosec B110
                         pass
                     frame = QgsLayoutFrame(layout, table)
                     frame.attemptResize(QgsLayoutSize(table_w, 108, mm))
@@ -2748,7 +2748,7 @@ class ProfiliSezioniComuniPlugin:
                         QgsLayoutPoint(table_x, 178, mm), True, False, page_idx
                     )
                     table_x += table_w + 6
-                except Exception:
+                except Exception:  # nosec B110
                     pass
 
         return layout

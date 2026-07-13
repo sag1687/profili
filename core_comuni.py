@@ -231,7 +231,7 @@ def create_boundary_layer(geojson_feature, layer_name):
         # fallback: use fromGeoJson
         try:
             qgeom = QgsGeometry.fromWkt(_geojson_to_wkt_fallback(geom_json))
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     # Most reliable: parse via QGIS WKT
@@ -299,5 +299,5 @@ def _apply_boundary_style(vl):
             }
         )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
-    except Exception:
+    except Exception:  # nosec B110
         pass

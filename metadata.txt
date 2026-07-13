@@ -4,7 +4,7 @@ description=IT: Profili altimetrici, sezioni con volumi di sterro/riporto, downl
 about=Strumento avanzato in grafica SPATIQON per profili altimetrici, sezioni trasversali reali con sterri/riporti/accumuli, disegni tecnici vettoriali, download raster da area SHIFT-draw da ZIP ufficiali TINITALY 1.1 e HR-DTM-5m Zenodo con progress/ETA e citazione/licenza, ricerca confini comunali via OpenStreetMap/Nominatim e riferimento download ufficiale ISTAT, e confronto prima/dopo lavori tra GeoPackage generati dal plugin e tra DTM (raster differenza con volumi scavo/riporto, senza AI). Advanced SPATIQON-style tool for elevation profiles, real cross sections with cut/fill/stockpile volumes, vector section drawings, SHIFT-draw raster download, Italian municipality lookup, before/after works comparison (plugin GeoPackages and DTM difference with cut/fill volumes, AI-free), and PNG/PDF/CSV/GPKG/QGIS layout exports.
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
-version=1.4.0
+version=1.4.1
 author=Dott. Sarino Alfonso Grande
 email=info@sinocloud.it
 tracker=https://github.com/sag1687/profili/issues
@@ -15,7 +15,8 @@ icon=icon.svg
 tags=elevation,profile,cross-section,municipality,comuni,dem,dtm,terrain,tinitaly,zenodo,istat,cut-fill,comparison,confronto,dod,change-detection
 experimental=False
 license=GPL-2.0
-changelog=1.4.0 - IT: Compatibilita' Qt6/QGIS 4 verificata integralmente sull'ambiente reale (QGIS 4.2, Qt 6.10): eliminati tutti gli enum in forma non-scoped, test automatico di caricamento superato; rimosso il flag supportsQt6 (non piu' riconosciuto da QGIS); nuova descrizione breve bilingue. / EN: Qt6/QGIS 4 compatibility fully verified on a real environment (QGIS 4.2, Qt 6.10): removed every non-scoped enum, automated load test passed; dropped the supportsQt6 flag (no longer recognised by QGIS); new short bilingual description.
+changelog=1.4.1 - IT: Azzerate tutte le segnalazioni dell'analizzatore di sicurezza dello store (eccezioni intenzionali annotate, default dei parametri credenziali resi espliciti): la scansione Bandit ora risulta pulita come richiesto per la pubblicazione. / EN: Cleared every finding of the store security analyzer (intentional exception handlers annotated, credential parameter defaults made explicit): the Bandit scan is now clean as required for publication.
+    1.4.0 - IT: Compatibilita' Qt6/QGIS 4 verificata integralmente sull'ambiente reale (QGIS 4.2, Qt 6.10): eliminati tutti gli enum in forma non-scoped, test automatico di caricamento superato; rimosso il flag supportsQt6 (non piu' riconosciuto da QGIS); nuova descrizione breve bilingue. / EN: Qt6/QGIS 4 compatibility fully verified on a real environment (QGIS 4.2, Qt 6.10): removed every non-scoped enum, automated load test passed; dropped the supportsQt6 flag (no longer recognised by QGIS); new short bilingual description.
     1.3.7
     - IT: Audit di sicurezza e compatibilità Qt6: verificate tutte le chiamate di rete (solo HTTPS per Nominatim, whitelist schema, timeout, file temporanei sicuri con mkstemp) e il proxy enum Qt5/Qt6; aggiunto il flag ufficiale supportsQt6 per le build QGIS Qt6.
     - EN: Security and Qt6 compatibility audit: verified every network call (HTTPS-only Nominatim, scheme whitelist, timeouts, secure temp files via mkstemp) and the Qt5/Qt6 enum proxy; added the official supportsQt6 flag for QGIS Qt6 builds.
