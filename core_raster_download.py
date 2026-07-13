@@ -31,7 +31,6 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
-
 TINITALY_ROOT = "http://tinitaly.pi.ingv.it/"
 TINITALY_WCS_URL = "http://tinitaly.pi.ingv.it/TINItaly_1_1/wcs"
 TINITALY_WCS_CAPABILITIES = (
@@ -44,16 +43,25 @@ TINITALY_WCS_URI = (
     "identifier=TINItaly_DEM&url={0}"
 ).format(TINITALY_WCS_URL)
 TINITALY_TILE_RE = re.compile(
-    r"""href=["'](?P<href>data_1\.1/(?P<code>[ew]\d{5}_s10)/(?P=code)\.zip)["']""",
+
+
+
+
+    r"""href=["'](?P<href>data_1\.1/"""
+    r"""(?P<code>[ew]\d{5}_s10)/(?P=code)\.zip)["']""",
     re.IGNORECASE,
 )
 TINITALY_CRS = QgsCoordinateReferenceSystem("EPSG:32632")
 
 ZENODO_RECORD_REQUESTED = "https://zenodo.org/records/18872933"
 ZENODO_RECORD_LATEST = "https://zenodo.org/records/18921767"
-ZENODO_FILE_URL = "https://zenodo.org/api/records/18921767/files/HRDTM5m/content"
-ZENODO_VSICURL = "/vsicurl?max_retry=3&retry_delay=2&list_dir=no&url={0}".format(
-    urllib.parse.quote(ZENODO_FILE_URL, safe=":/")
+ZENODO_FILE_URL = (
+    "https://zenodo.org/api/records/18921767/files/HRDTM5m/content"
+)
+ZENODO_VSICURL = (
+    "/vsicurl?max_retry=3&retry_delay=2&list_dir=no&url={0}".format(
+        urllib.parse.quote(ZENODO_FILE_URL, safe=":/")
+    )
 )
 ZENODO_VSICURL_LEGACY = "/vsicurl/{0}".format(ZENODO_FILE_URL)
 
@@ -73,15 +81,20 @@ RASTER_SOURCES = {
         "url": TINITALY_DOWNLOAD_PAGE,
         "service_url": TINITALY_WCS_CAPABILITIES,
         "citation": (
-            "Tarquini S., Isola I., Favalli M., Battistini A., Dotta G. (2023). "
-            "TINITALY, a digital elevation model of Italy with a 10 meters cell "
-            "size (Version 1.1). Istituto Nazionale di Geofisica e Vulcanologia "
+            "Tarquini S., Isola I., Favalli M., Battistini A., Dotta G. "
+            "(2023). "
+            "TINITALY, a digital elevation model of Italy with a 10 meters "
+            "cell "
+            "size (Version 1.1). Istituto Nazionale di Geofisica e "
+            "Vulcanologia "
             "(INGV). https://doi.org/10.13127/tinitaly/1.1"
         ),
         "note": (
             "The official download area provides tiled ZIP files. The plugin "
-            "selects the ZIP tiles intersecting the drawn area, builds a temporary "
-            "VRT and clips the requested GeoTIFF. WCS loading remains optional."
+            "selects the ZIP tiles intersecting the drawn area, builds a "
+            "temporary "
+            "VRT and clips the requested GeoTIFF. WCS loading remains "
+            "optional."
         ),
     },
     "hrdtm5m": {
@@ -95,15 +108,20 @@ RASTER_SOURCES = {
         "file_url": ZENODO_FILE_URL,
         "size": "22.09 GB",
         "citation": (
-            "Panza M., Muto M., Rossi M., Alvioli M., Iovine G., Marchesini I. "
-            "(2026). 5m Resolution Digital Terrain Model for Italy, version 1.2. "
+            "Panza M., Muto M., Rossi M., Alvioli M., Iovine G., Marchesini "
+            "I. "
+            "(2026). 5m Resolution Digital Terrain Model for Italy, version "
+            "1.2. "
             "Zenodo. https://doi.org/10.5281/zenodo.18921767"
         ),
         "note": (
-            "The user supplied Zenodo record 18872933 (version 1.1); the latest "
+            "The user supplied Zenodo record 18872933 (version 1.1); the "
+            "latest "
             "published version checked for this plugin is record 18921767 "
-            "(version 1.2, 2026-03-09). GDAL /vsicurl range reads and cache are "
-            "enabled to avoid downloading the full archive when the server and "
+            "(version 1.2, 2026-03-09). GDAL /vsicurl range reads and cache "
+            "are "
+            "enabled to avoid downloading the full archive when the server "
+            "and "
             "file layout allow windowed reads."
         ),
     },
@@ -150,7 +168,9 @@ def bbox_wgs84_from_points(area_points):
     crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
     source_crs = project.crs()
     try:
-        xform = QgsCoordinateTransform(source_crs, crs_wgs, project.transformContext())
+        xform = QgsCoordinateTransform(
+            source_crs, crs_wgs, project.transformContext()
+        )
     except Exception:
         xform = QgsCoordinateTransform(source_crs, crs_wgs, project)
 
@@ -229,7 +249,9 @@ def _rect_intersects(a, b):
 def _transform_rect(rect, source_crs, target_crs):
     project = QgsProject.instance()
     try:
-        xform = QgsCoordinateTransform(source_crs, target_crs, project.transformContext())
+        xform = QgsCoordinateTransform(
+            source_crs, target_crs, project.transformContext()
+        )
     except Exception:
         xform = QgsCoordinateTransform(source_crs, target_crs, project)
     points = [
@@ -246,9 +268,13 @@ def _transform_rect(rect, source_crs, target_crs):
 def tinitaly_tile_index():
     req = urllib.request.Request(
         _ensure_http_url(TINITALY_DOWNLOAD_PAGE),
-        headers={"User-Agent": "ProfiliSezioniComuni/1.2 (+info@sinocloud.it)"},
+        headers={
+            "User-Agent": "ProfiliSezioniComuni/1.2 (+info@sinocloud.it)"
+        },
     )
-    with urllib.request.urlopen(req, timeout=45) as response:  # nosec B310 - schema http(s) validato sopra
+    with urllib.request.urlopen(
+        req, timeout=45
+    ) as response:  # nosec B310 - schema http(s) validato sopra
         html = response.read().decode("utf-8", "replace")
 
     tiles = []
@@ -259,13 +285,17 @@ def tinitaly_tile_index():
             continue
         seen.add(code)
         href = match.group("href")
-        tiles.append({
-            "code": code,
-            "url": urllib.parse.urljoin(TINITALY_ROOT, href),
-            "extent": tinitaly_tile_extent(code),
-        })
+        tiles.append(
+            {
+                "code": code,
+                "url": urllib.parse.urljoin(TINITALY_ROOT, href),
+                "extent": tinitaly_tile_extent(code),
+            }
+        )
     if not tiles:
-        raise RuntimeError("No TINITALY tile links were found on the official download page.")
+        raise RuntimeError(
+            "No TINITALY tile links were found on the official download page."
+        )
     return tiles
 
 
@@ -277,7 +307,8 @@ def tinitaly_tiles_for_area(area_points):
         TINITALY_CRS,
     )
     return [
-        tile for tile in tinitaly_tile_index()
+        tile
+        for tile in tinitaly_tile_index()
         if _rect_intersects(tile["extent"], rect_tinitaly)
     ]
 
@@ -304,7 +335,9 @@ def _gdal_callback(progress_callback, start, end, label):
 
     def _callback(complete, message, _data):
         elapsed = max(time.time() - started, 0.001)
-        percent = start + (end - start) * max(0.0, min(float(complete or 0), 1.0))
+        percent = start + (end - start) * max(
+            0.0, min(float(complete or 0), 1.0)
+        )
         eta = None
         if complete and complete > 0:
             eta = elapsed * (1.0 - complete) / complete
@@ -320,7 +353,15 @@ def _gdal_callback(progress_callback, start, end, label):
     return _callback
 
 
-def _clip_raster_with_gdal(input_raster, rect, rect_srs, output_path, progress_callback, start=0, end=100):
+def _clip_raster_with_gdal(
+    input_raster,
+    rect,
+    rect_srs,
+    output_path,
+    progress_callback,
+    start=0,
+    end=100,
+):
     gdal = _configure_gdal_network()
     creation_options = ["COMPRESS=DEFLATE", "TILED=YES", "BIGTIFF=IF_SAFER"]
     options = gdal.TranslateOptions(
@@ -334,7 +375,9 @@ def _clip_raster_with_gdal(input_raster, rect, rect_srs, output_path, progress_c
         projWinSRS=rect_srs,
         noData=-9999,
         creationOptions=creation_options,
-        callback=_gdal_callback(progress_callback, start, end, "Ritaglio raster / Raster clipping"),
+        callback=_gdal_callback(
+            progress_callback, start, end, "Ritaglio raster / Raster clipping"
+        ),
     )
     result = gdal.Translate(output_path, input_raster, options=options)
     if result is None:
@@ -346,7 +389,8 @@ def _clip_raster_with_gdal(input_raster, rect, rect_srs, output_path, progress_c
 def _clip_remote_raster(source_key, rect, output_path, progress_callback):
     source_paths = (
         [ZENODO_VSICURL, ZENODO_VSICURL_LEGACY]
-        if source_key == "hrdtm5m" else [input_for_source(source_key)]
+        if source_key == "hrdtm5m"
+        else [input_for_source(source_key)]
     )
     last_error = None
     for source_path in source_paths:
@@ -379,7 +423,9 @@ def _download_file(url, output_path, progress_callback, start, end, label):
     tmp_path = output_path + ".part"
     done = 0
     started = time.time()
-    with urllib.request.urlopen(req, timeout=60) as response:  # nosec B310 - schema validato sopra
+    with urllib.request.urlopen(
+        req, timeout=60
+    ) as response:  # nosec B310 - schema validato sopra
         total = int(response.headers.get("Content-Length") or 0)
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
@@ -425,7 +471,9 @@ def _tinitaly_zip_vsi_path(zip_path, tile_code):
     return "/vsizip/{0}/{1}/{1}.tif".format(zip_path, tile_code)
 
 
-def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, progress_callback):
+def _download_tinitaly_tiles_area(
+    area_points, output_path, load_to_project, progress_callback
+):
     rect_wgs84 = bbox_wgs84_from_points(area_points)
     rect_tinitaly = _transform_rect(
         rect_wgs84,
@@ -433,21 +481,27 @@ def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, pro
         TINITALY_CRS,
     )
     tiles = [
-        tile for tile in tinitaly_tile_index()
+        tile
+        for tile in tinitaly_tile_index()
         if _rect_intersects(tile["extent"], rect_tinitaly)
     ]
     if not tiles:
         raise RuntimeError(
-            "No TINITALY tile intersects the drawn area. Check that the area is inside Italy."
+            "No TINITALY tile intersects the drawn area. Check that the area "
+            "is inside Italy."
         )
 
-    cache_dir = os.path.join(os.path.dirname(output_path), "tinitaly_1_1_tiles")
+    cache_dir = os.path.join(
+        os.path.dirname(output_path), "tinitaly_1_1_tiles"
+    )
     os.makedirs(cache_dir, exist_ok=True)
 
     _emit_progress(
         progress_callback,
         1,
-        "Trovati {0} tile TINITALY / Found {0} TINITALY tiles".format(len(tiles)),
+        "Trovati {0} tile TINITALY / Found {0} TINITALY tiles".format(
+            len(tiles)
+        ),
     )
     vsi_inputs = []
     download_start = 2.0
@@ -463,7 +517,14 @@ def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, pro
             len(tiles),
             _format_tile_code(tile["code"]),
         )
-        _download_file(tile["url"], zip_path, progress_callback, tile_start, tile_end, label)
+        _download_file(
+            tile["url"],
+            zip_path,
+            progress_callback,
+            tile_start,
+            tile_end,
+            label,
+        )
         vsi_inputs.append(_tinitaly_zip_vsi_path(zip_path, tile["code"]))
 
     gdal = _configure_gdal_network()
@@ -472,7 +533,9 @@ def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, pro
     try:
         vrt = gdal.BuildVRT(vrt_path, vsi_inputs)
         if vrt is None:
-            raise RuntimeError("Could not build temporary VRT from TINITALY ZIP tiles.")
+            raise RuntimeError(
+                "Could not build temporary VRT from TINITALY ZIP tiles."
+            )
         vrt = None
         _clip_raster_with_gdal(
             vrt_path,
@@ -493,7 +556,10 @@ def _download_tinitaly_tiles_area(area_points, output_path, load_to_project, pro
     write_download_receipt(output_path, "tinitaly", rect_wgs84)
     layer = None
     if load_to_project:
-        layer = QgsRasterLayer(output_path, "{0} - area".format(RASTER_SOURCES["tinitaly"]["short"]))
+        layer = QgsRasterLayer(
+            output_path,
+            "{0} - area".format(RASTER_SOURCES["tinitaly"]["short"]),
+        )
     return output_path, rect_wgs84, layer
 
 
@@ -501,7 +567,8 @@ def create_download_area_layer(area_points, layer_name="Area download raster"):
     project = QgsProject.instance()
     crs_auth = project.crs().authid() or "EPSG:4326"
     vl = QgsVectorLayer(
-        "Polygon?crs={0}&field=source:string(80)&field=created:string(32)".format(crs_auth),
+        "Polygon?crs={0}&field=source:string(80)"
+        "&field=created:string(32)".format(crs_auth),
         layer_name,
         "memory",
     )
@@ -510,17 +577,24 @@ def create_download_area_layer(area_points, layer_name="Area download raster"):
 
     feat = QgsFeature()
     feat.setGeometry(QgsGeometry.fromPolygonXY([area_points]))
-    feat.setAttributes(["raster-download", datetime.datetime.now().isoformat(timespec="seconds")])
+    feat.setAttributes(
+        [
+            "raster-download",
+            datetime.datetime.now().isoformat(timespec="seconds"),
+        ]
+    )
     pr = vl.dataProvider()
     pr.addFeature(feat)
     vl.updateExtents()
 
     try:
-        symbol = QgsFillSymbol.createSimple({
-            "color": "245,166,35,35",
-            "outline_color": "#f5a623",
-            "outline_width": "0.8",
-        })
+        symbol = QgsFillSymbol.createSimple(
+            {
+                "color": "245,166,35,35",
+                "outline_color": "#f5a623",
+                "outline_width": "0.8",
+            }
+        )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
     except Exception:
         pass
@@ -534,7 +608,9 @@ def tinitaly_wcs_layer():
     if not layer.isValid():
         raise RuntimeError(
             "TINITALY WCS layer is not valid in this QGIS/GDAL installation. "
-            "Use the official download page: {0}".format(TINITALY_DOWNLOAD_PAGE)
+            "Use the official download page: {0}".format(
+                TINITALY_DOWNLOAD_PAGE
+            )
         )
     return layer
 
@@ -547,7 +623,13 @@ def input_for_source(source_key):
     raise ValueError("Unknown raster source: {0}".format(source_key))
 
 
-def download_raster_area(source_key, area_points, output_path, load_to_project=True, progress_callback=None):
+def download_raster_area(
+    source_key,
+    area_points,
+    output_path,
+    load_to_project=True,
+    progress_callback=None,
+):
     if not output_path:
         raise ValueError("No output raster path selected.")
     if not output_path.lower().endswith((".tif", ".tiff")):
@@ -569,13 +651,19 @@ def download_raster_area(source_key, area_points, output_path, load_to_project=T
             0,
             "Avvio ritaglio remoto Zenodo / Starting Zenodo remote clipping",
         )
-        final_path = _clip_remote_raster(source_key, rect, output_path, progress_callback)
+        final_path = _clip_remote_raster(
+            source_key, rect, output_path, progress_callback
+        )
     else:
         input_raster = input_for_source(source_key)
         try:
             import processing
         except Exception as exc:
-            raise RuntimeError("QGIS Processing is required for raster clipping: {0}".format(exc))
+            raise RuntimeError(
+                "QGIS Processing is required for raster clipping: {0}".format(
+                    exc
+                )
+            )
 
         params = {
             "INPUT": input_raster,
@@ -590,7 +678,9 @@ def download_raster_area(source_key, area_points, output_path, load_to_project=T
         result = processing.run("gdal:cliprasterbyextent", params)
         final_path = result.get("OUTPUT") or output_path
 
-    _emit_progress(progress_callback, 100, "Scrittura ricevuta / Writing source receipt")
+    _emit_progress(
+        progress_callback, 100, "Scrittura ricevuta / Writing source receipt"
+    )
 
     write_download_receipt(final_path, source_key, rect)
 
@@ -606,7 +696,9 @@ def write_download_receipt(raster_path, source_key, rect):
     receipt_path = os.path.splitext(raster_path)[0] + "_fonte_licenza.txt"
     lines = [
         "Raster download receipt / Ricevuta download raster",
-        "Created / Creato: {0}".format(datetime.datetime.now().isoformat(timespec="seconds")),
+        "Created / Creato: {0}".format(
+            datetime.datetime.now().isoformat(timespec="seconds")
+        ),
         "",
         "Source / Fonte: {0}".format(meta.get("label_it")),
         "Resolution / Risoluzione: {0}".format(meta.get("resolution")),
@@ -621,11 +713,17 @@ def write_download_receipt(raster_path, source_key, rect):
         meta.get("note", ""),
     ]
     if meta.get("requested_url"):
-        lines.extend([
-            "",
-            "Requested record / Record richiesto: {0}".format(meta.get("requested_url")),
-            "Latest record used / Record latest usato: {0}".format(meta.get("url")),
-        ])
+        lines.extend(
+            [
+                "",
+                "Requested record / Record richiesto: {0}".format(
+                    meta.get("requested_url")
+                ),
+                "Latest record used / Record latest usato: {0}".format(
+                    meta.get("url")
+                ),
+            ]
+        )
     with open(receipt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return receipt_path

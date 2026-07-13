@@ -32,11 +32,27 @@ Tabs:
 import os
 
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QComboBox, QSpinBox, QDoubleSpinBox, QWidget, QTabWidget,
-    QCheckBox, QLineEdit, QProgressBar, QGroupBox, QSizePolicy,
-    QListWidget, QListWidgetItem, QTextBrowser, QApplication,
-    QFormLayout, QFrame,
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
+    QComboBox,
+    QSpinBox,
+    QDoubleSpinBox,
+    QWidget,
+    QTabWidget,
+    QCheckBox,
+    QLineEdit,
+    QProgressBar,
+    QGroupBox,
+    QSizePolicy,
+    QListWidget,
+    QListWidgetItem,
+    QTextBrowser,
+    QApplication,
+    QFormLayout,
+    QFrame,
 )
 from qgis.PyQt.QtCore import Qt, QSize, QSettings
 from qgis.PyQt.QtGui import QPixmap
@@ -44,12 +60,14 @@ from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer, QgsWkbTypes
 
 from .core_raster_download import source_info_text, source_label
 from .qt_compat import ensure_qt_compat, QtCompat
+
 ensure_qt_compat(Qt)
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Translation helper — same pattern as q_press
 # ──────────────────────────────────────────────────────────────────────
+
 
 def _t(lang, it, en):
     """Return Italian or English string based on lang ("it" or "en")."""
@@ -64,7 +82,8 @@ OCEAN_STYLE = """
 QDialog {
     background-color: #020e1a;
     color: #d0f0ff;
-    font-family: 'Segoe UI', 'Inter', 'Roboto', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Segoe UI', 'Inter', 'Roboto', Tahoma, Geneva, Verdana,
+    sans-serif;
     font-size: 13px;
 }
 QWidget { background-color: #020e1a; color: #d0f0ff; }
@@ -74,7 +93,8 @@ QGroupBox {
     border-radius: 10px;
     margin-top: 12px;
     padding: 14px 12px 12px 12px;
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #071c2e,stop:1 #020e1a);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #071c2e,stop:1
+    #020e1a);
     color: #d0f0ff;
     font-weight: 600;
 }
@@ -98,7 +118,8 @@ QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus {
 }
 QComboBox::drop-down { border: none; padding-right: 6px; }
 QPushButton {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #006688,stop:1 #004455);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #006688,stop:1
+    #004455);
     color: #00e5ff;
     border: 1px solid #00e5ff;
     border-radius: 7px;
@@ -107,11 +128,13 @@ QPushButton {
     font-size: 13px;
 }
 QPushButton:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0099bb,stop:1 #006688);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0099bb,stop:1
+    #006688);
     color: #d0f0ff;
 }
 QPushButton:pressed { background: #004455; }
-QPushButton:disabled { background: #071c2e; color: #4a8090; border-color: #0a3a58; }
+QPushButton:disabled { background: #071c2e; color: #4a8090; border-color:
+#0a3a58; }
 QPushButton#btnCancel {
     background: #071c2e;
     color: #7ac8d8;
@@ -128,36 +151,44 @@ QPushButton#btnLang {
 }
 QPushButton#btnLang:hover { background: #0d2d42; color: #d0f0ff; }
 QPushButton#btnExportPng, QPushButton#btnExportPdf {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #005577,stop:1 #003355);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #005577,stop:1
+    #003355);
     color: #00e5ff;
     border: 1px solid #0099bb;
 }
 QPushButton#btnExportPng:hover, QPushButton#btnExportPdf:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0099bb,stop:1 #005577);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #0099bb,stop:1
+    #005577);
 }
 QPushButton#btnExportCsv {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #996600,stop:1 #664400);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #996600,stop:1
+    #664400);
     color: #ffb700;
     border: 1px solid #ffb700;
 }
 QPushButton#btnExportCsv:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cc8800,stop:1 #996600);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cc8800,stop:1
+    #996600);
 }
 QPushButton#btnPrintLayout {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #220055,stop:1 #110033);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #220055,stop:1
+    #110033);
     color: #cc99ff;
     border: 1px solid #9933ff;
 }
 QPushButton#btnPrintLayout:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #440088,stop:1 #220055);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #440088,stop:1
+    #220055);
 }
 QPushButton#btnComuniLoad {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #005544,stop:1 #003322);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #005544,stop:1
+    #003322);
     color: #00ffb3;
     border: 1px solid #00ffb3;
 }
 QPushButton#btnComuniLoad:hover {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #008866,stop:1 #005544);
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #008866,stop:1
+    #005544);
 }
 QTabWidget::pane {
     border: 1px solid #0a4a6e;
@@ -190,7 +221,8 @@ QProgressBar {
     color: transparent;
 }
 QProgressBar::chunk {
-    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0099bb,stop:1 #00e5ff);
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #0099bb,stop:1
+    #00e5ff);
     border-radius: 4px;
 }
 QCheckBox { color: #7ac8d8; spacing: 6px; }
@@ -239,7 +271,8 @@ SPATIQON_STYLE = """
 QDialog {
     background: #12151e;
     color: #e2e8f0;
-    font-family: 'Segoe UI', 'Inter', 'Roboto', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Segoe UI', 'Inter', 'Roboto', Tahoma, Geneva, Verdana,
+    sans-serif;
     font-size: 13px;
 }
 QWidget {
@@ -344,7 +377,8 @@ QPushButton {
 }
 QPushButton:hover { background: #252d42; border-color: #4f73c4; }
 QPushButton:pressed { background: #0e1118; }
-QPushButton:disabled { background: #161b26; color: #3d4b6a; border-color: #1e2437; }
+QPushButton:disabled { background: #161b26; color: #3d4b6a; border-color:
+#1e2437; }
 QPushButton#Primary, QPushButton#btnComuniLoad, QPushButton#btnDownloadRaster {
     background: #3b5bdb;
     color: #ffffff;
@@ -436,23 +470,29 @@ INFO_HTML = """
 <html>
 <head>
 <style>
-  body { background:#12151e; color:#e2e8f0; font-family:'Segoe UI',Arial,sans-serif;
+  body { background:#12151e; color:#e2e8f0; font-family:'Segoe
+  UI',Arial,sans-serif;
          font-size:12px; margin:16px; line-height:1.6; }
-  h2   { color:#f1f5f9; font-size:17px; margin:0 0 12px; border-bottom:1px solid #2d3757;
+  h2   { color:#f1f5f9; font-size:17px; margin:0 0 12px; border-bottom:1px
+  solid #2d3757;
          padding-bottom:6px; }
   h3   { color:#c7d8ef; font-size:13px; margin:16px 0 6px; }
   h4   { color:#f5a623; font-size:12px; margin:12px 0 4px; }
   p, li { margin:3px 0; color:#8ba3c7; }
   a    { color:#8fb3ff; }
-  code { background:#0e1118; padding:1px 4px; border-radius:3px; font-family:monospace; }
+  code { background:#0e1118; padding:1px 4px; border-radius:3px;
+  font-family:monospace; }
   table { border-collapse:collapse; width:100%; margin:8px 0; }
   th   { background:#1e2437; color:#8ba3c7; padding:7px 10px; text-align:left;
-         border-bottom:2px solid #2d3757; font-size:11px; text-transform:uppercase; }
+         border-bottom:2px solid #2d3757; font-size:11px;
+         text-transform:uppercase; }
   td   { padding:6px 10px; border-bottom:1px solid #2d3757; color:#e2e8f0; }
   tr:nth-child(even) td { background:rgba(30,36,55,0.5); }
-  .badge-warn { background:rgba(245,166,35,0.16); color:#f5a623; padding:1px 6px;
+  .badge-warn { background:rgba(245,166,35,0.16); color:#f5a623; padding:1px
+  6px;
                 border-radius:8px; font-size:11px; font-weight:600; }
-  .badge-ok   { background:rgba(52,201,138,0.15); color:#34c98a; padding:1px 6px;
+  .badge-ok   { background:rgba(52,201,138,0.15); color:#34c98a; padding:1px
+  6px;
                 border-radius:8px; font-size:11px; font-weight:600; }
   .section-sep { border:none; border-top:1px solid #2d3757; margin:16px 0; }
   .callout { background:#1e2437; border:1px solid #2d3757; border-radius:6px;
@@ -463,38 +503,53 @@ INFO_HTML = """
 
 <h2>PROGETTO / PROJECT</h2>
 <div class="callout">
-  <p><b>Profili, Sezioni e Comuni</b> usa una grafica coerente con SPATIQON e integra profili,
-  sezioni trasversali, sterri, riporti, accumuli e download raster da area disegnata.</p>
-  <p>Il plugin &egrave; ispirato al lavoro di <b>Giulio Fattori</b>, in particolare al plugin
-  <a href="https://plugins.qgis.org/plugins/Topographical_profiles/">Topographic Profile</a>
+  <p><b>Profili, Sezioni e Comuni</b> usa una grafica coerente con SPATIQON e
+  integra profili,
+  sezioni trasversali, sterri, riporti, accumuli e download raster da area
+  disegnata.</p>
+  <p>Il plugin &egrave; ispirato al lavoro di <b>Giulio Fattori</b>, in
+  particolare al plugin
+  <a
+  href="https://plugins.qgis.org/plugins/Topographical_profiles/">Topographic
+  Profile</a>
   pubblicato nel repository plugin QGIS e indicato nella pagina autore:
-  <a href="https://plugins.qgis.org/plugins/author/Giulio%20Fattori/">Giulio Fattori</a>.</p>
+  <a href="https://plugins.qgis.org/plugins/author/Giulio%20Fattori/">Giulio
+  Fattori</a>.</p>
 </div>
 
 <h2>DOWNLOAD RASTER / RASTER DOWNLOAD</h2>
 <table>
-  <tr><th>Fonte / Source</th><th>Licenza / License</th><th>Citazione / Citation</th></tr>
+  <tr><th>Fonte / Source</th><th>Licenza / License</th><th>Citazione /
+  Citation</th></tr>
   <tr>
     <td>TINITALY 1.1 DEM 10 m — INGV<br>
       ZIP ufficiali per download area · WCS opzionale per visualizzazione<br>
-      <a href="http://tinitaly.pi.ingv.it/Download_Area1_1.html">Download area</a> ·
-      <a href="http://tinitaly.pi.ingv.it/TINItaly_1_1/wcs?service=WCS&request=getCapabilities">WCS</a>
+      <a href="http://tinitaly.pi.ingv.it/Download_Area1_1.html">Download
+      area</a> ·
+      <a
+      href="http://tinitaly.pi.ingv.it/TINItaly_1_1/wcs?service=WCS&request=getCapabilities">WCS</a>
     </td>
     <td><span class="badge-ok">CC BY 4.0</span></td>
     <td>Tarquini S., Isola I., Favalli M., Battistini A., Dotta G. (2023).
-      <i>TINITALY, a digital elevation model of Italy with a 10 meters cell size (Version 1.1)</i>.
-      INGV. DOI: <a href="https://doi.org/10.13127/tinitaly/1.1">10.13127/tinitaly/1.1</a></td>
+      <i>TINITALY, a digital elevation model of Italy with a 10 meters cell
+      size (Version 1.1)</i>.
+      INGV. DOI: <a
+      href="https://doi.org/10.13127/tinitaly/1.1">10.13127/tinitaly/1.1</a></td>
   </tr>
   <tr>
     <td>HR-DTM-5m Italia — Zenodo/CNR<br>
-      Record indicato: <a href="https://zenodo.org/records/18872933">18872933</a><br>
-      Versione latest verificata: <a href="https://zenodo.org/records/18921767">18921767</a>
+      Record indicato: <a
+      href="https://zenodo.org/records/18872933">18872933</a><br>
+      Versione latest verificata: <a
+      href="https://zenodo.org/records/18921767">18921767</a>
       (v1.2, 09/03/2026, file ~22.09 GB)
     </td>
     <td><span class="badge-ok">CC BY 4.0</span></td>
-    <td>Panza M., Muto M., Rossi M., Alvioli M., Iovine G., Marchesini I. (2026).
+    <td>Panza M., Muto M., Rossi M., Alvioli M., Iovine G., Marchesini I.
+    (2026).
       <i>5m Resolution Digital Terrain Model for Italy</i>, version 1.2.
-      Zenodo. DOI: <a href="https://doi.org/10.5281/zenodo.18921767">10.5281/zenodo.18921767</a></td>
+      Zenodo. DOI: <a
+      href="https://doi.org/10.5281/zenodo.18921767">10.5281/zenodo.18921767</a></td>
   </tr>
 </table>
 
@@ -503,16 +558,22 @@ INFO_HTML = """
 <h3>1. Open-Elevation API</h3>
 <table>
   <tr><th>Attributo</th><th>Valore / Value</th></tr>
-  <tr><td>Sito / Site</td><td><a href="https://www.open-elevation.com">open-elevation.com</a></td></tr>
-  <tr><td>Dati / Data</td><td>SRTM (Shuttle Radar Topography Mission, NASA, 2000)</td></tr>
-  <tr><td>Licenza API</td><td>GPLv2 (open source, uso libero / free use)</td></tr>
+  <tr><td>Sito / Site</td><td><a
+  href="https://www.open-elevation.com">open-elevation.com</a></td></tr>
+  <tr><td>Dati / Data</td><td>SRTM (Shuttle Radar Topography Mission, NASA,
+  2000)</td></tr>
+  <tr><td>Licenza API</td><td>GPLv2 (open source, uso libero / free
+  use)</td></tr>
   <tr><td>Licenza dati / Data license</td><td>Public Domain (NASA)</td></tr>
   <tr><td>Risoluzione / Resolution</td>
-      <td>30 m (SRTM 1-arc-second, US zones) / 90 m (SRTM 3-arc-second, global)</td></tr>
+      <td>30 m (SRTM 1-arc-second, US zones) / 90 m (SRTM 3-arc-second,
+      global)</td></tr>
   <tr><td>Accuratezza verticale / Vertical accuracy</td>
-      <td>&plusmn;16 m (90% confidence, flat areas) &nbsp; &plusmn;30 m (mountainous)</td></tr>
+      <td>&plusmn;16 m (90% confidence, flat areas) &nbsp; &plusmn;30 m
+      (mountainous)</td></tr>
   <tr><td>Limite API pubblica / Public API limit</td>
-      <td><span class="badge-warn">~1.000 req/mese</span> — istanza demo ufficiale / official demo instance</td></tr>
+      <td><span class="badge-warn">~1.000 req/mese</span> — istanza demo
+      ufficiale / official demo instance</td></tr>
   <tr><td>Nota / Note</td>
       <td>Per uso intensivo ospita la tua istanza (Docker disponibile)
       / For heavy use, self-host (Docker available)</td></tr>
@@ -521,37 +582,50 @@ INFO_HTML = """
 <h3>2. OpenTopoData API</h3>
 <table>
   <tr><th>Attributo</th><th>Valore / Value</th></tr>
-  <tr><td>Sito / Site</td><td><a href="https://www.opentopodata.org">opentopodata.org</a></td></tr>
+  <tr><td>Sito / Site</td><td><a
+  href="https://www.opentopodata.org">opentopodata.org</a></td></tr>
   <tr><td>Dataset disponibili / Available datasets</td>
       <td>SRTM, ASTER GDEM v3, EU-DEM v1.1, GEBCO, NED (USA), mapzen</td></tr>
   <tr><td>Dataset usato da questo plugin</td><td><code>srtm90m</code></td></tr>
   <tr><td>Licenza API</td><td>MIT (uso libero / free use)</td></tr>
   <tr><td>Licenza EU-DEM</td><td>CC BY 4.0 (Copernicus / ESA)</td></tr>
   <tr><td>Risoluzione EU-DEM</td><td>25 m</td></tr>
-  <tr><td>Accuratezza EU-DEM / EU-DEM accuracy</td><td>&plusmn;7 m (Europe)</td></tr>
+  <tr><td>Accuratezza EU-DEM / EU-DEM accuracy</td><td>&plusmn;7 m
+  (Europe)</td></tr>
   <tr><td>Accuratezza SRTM / SRTM accuracy</td><td>&plusmn;16 m</td></tr>
   <tr><td>Limite API pubblica / Public API limit</td>
-      <td><span class="badge-warn">100 req/giorno, 1 req/secondo</span></td></tr>
+      <td><span class="badge-warn">100 req/giorno, 1
+      req/secondo</span></td></tr>
 </table>
 
 <h3>3. Raster Locale (DEM/DTM locale)</h3>
 <table>
-  <tr><th>Fonte / Source</th><th>Accuratezza tipica / Typical accuracy</th></tr>
-  <tr><td>LiDAR aereo / Airborne LiDAR</td><td><span class="badge-ok">&plusmn;0.1 m</span></td></tr>
-  <tr><td>Fotogrammetria UAV / UAV photogrammetry</td><td><span class="badge-ok">&plusmn;0.5 m</span></td></tr>
-  <tr><td>Fotogrammetria aerea / Aerial photogrammetry</td><td>&plusmn;1–2 m</td></tr>
-  <tr><td>SRTM 30 m (regioni montuose)</td><td><span class="badge-warn">&plusmn;30 m</span></td></tr>
+  <tr><th>Fonte / Source</th><th>Accuratezza tipica / Typical
+  accuracy</th></tr>
+  <tr><td>LiDAR aereo / Airborne LiDAR</td><td><span
+  class="badge-ok">&plusmn;0.1 m</span></td></tr>
+  <tr><td>Fotogrammetria UAV / UAV photogrammetry</td><td><span
+  class="badge-ok">&plusmn;0.5 m</span></td></tr>
+  <tr><td>Fotogrammetria aerea / Aerial photogrammetry</td><td>&plusmn;1–2
+  m</td></tr>
+  <tr><td>SRTM 30 m (regioni montuose)</td><td><span
+  class="badge-warn">&plusmn;30 m</span></td></tr>
 </table>
 
 <hr class="section-sep"/>
 <h2>MARGINI DI ERRORE / ERROR MARGINS</h2>
 <ul>
-  <li><b>SRTM:</b> errore sistematico (bias) fino a &plusmn;6 m; errore casuale &plusmn;16 m (1&sigma;)</li>
-  <li><b>EU-DEM:</b> errore medio &plusmn;2.9 m su aree pianeggianti, &plusmn;7 m su zone alpine</li>
-  <li><b>Raster locale DEM/DTM:</b> dipende dal dato sorgente (LiDAR: &plusmn;0.1 m; fotogramm.: &plusmn;0.5 m)</li>
+  <li><b>SRTM:</b> errore sistematico (bias) fino a &plusmn;6 m; errore
+  casuale &plusmn;16 m (1&sigma;)</li>
+  <li><b>EU-DEM:</b> errore medio &plusmn;2.9 m su aree pianeggianti,
+  &plusmn;7 m su zone alpine</li>
+  <li><b>Raster locale DEM/DTM:</b> dipende dal dato sorgente (LiDAR:
+  &plusmn;0.1 m; fotogramm.: &plusmn;0.5 m)</li>
   <li style="color:#ef4444;"><b>Avviso / Warning:</b>
-      Le quote non sono adatte per progettazione strutturale, solo per analisi indicative.
-      Elevation data is not suitable for structural design — for indicative analysis only.</li>
+      Le quote non sono adatte per progettazione strutturale, solo per analisi
+      indicative.
+      Elevation data is not suitable for structural design — for indicative
+      analysis only.</li>
 </ul>
 
 <hr class="section-sep"/>
@@ -560,40 +634,69 @@ INFO_HTML = """
   <tr><th>Sorgente / Source</th><th>Dettagli</th></tr>
   <tr><td>Dati</td><td>&copy; OpenStreetMap contributors (ODbL 1.0)</td></tr>
   <tr><td>API</td><td>Nominatim —
-      <a href="https://nominatim.openstreetmap.org">nominatim.openstreetmap.org</a></td></tr>
+      <a
+      href="https://nominatim.openstreetmap.org">nominatim.openstreetmap.org</a></td></tr>
   <tr><td>Termini d'uso / Terms</td>
-      <td><span class="badge-warn">max 1 req/secondo, User-Agent obbligatorio</span></td></tr>
+      <td><span class="badge-warn">max 1 req/secondo, User-Agent
+      obbligatorio</span></td></tr>
   <tr><td>Confini ufficiali / Official boundaries</td>
       <td>ISTAT (<a href="https://www.istat.it">istat.it</a>) —
-      pagina download <a href="https://www.istat.it/statistiche-per-temi/focus/informazioni-territoriali-e-cartografiche/unita-amministrative/">Unit&agrave; amministrative</a>.
-      Usare ISTAT per confini amministrativi ufficiali; Nominatim resta una ricerca rapida in mappa.
-      / Use ISTAT for official administrative boundaries; Nominatim is a quick map lookup.</td></tr>
+      pagina download <a
+
+
+
+      href="https://www.istat.it/statistiche-per-temi/focus/informazioni-territoriali-e-cartografiche/unita-amministrative/"
+      >Unit&agrave; amministrative</a>.
+      Usare ISTAT per confini amministrativi ufficiali; Nominatim resta una
+      ricerca rapida in mappa.
+      / Use ISTAT for official administrative boundaries; Nominatim is a quick
+      map lookup.</td></tr>
 </table>
 
 <hr class="section-sep"/>
 <h2>ALTRI PLUGIN DELLO STESSO AUTORE / OTHER PLUGINS BY THE SAME AUTHOR</h2>
 <p>Pagina autore ufficiale / Official author page:
-   <a href="https://plugins.qgis.org/plugins/author/Dott.%20Sarino%20Alfonso%20Grande/">plugins.qgis.org — Dott. Sarino Alfonso Grande</a></p>
+   <a
+
+
+
+   href="https://plugins.qgis.org/plugins/author/Dott.%20Sarino%20Alfonso%20Grande/"
+   >plugins.qgis.org — Dott. Sarino Alfonso Grande</a></p>
 <table>
   <tr><th>Plugin</th><th>Descrizione / Description</th></tr>
-  <tr><td><a href="https://plugins.qgis.org/plugins/qgis_ledger/">QGIS Ledger</a></td>
-      <td>Controllo versione stile Git per QGIS: diff geometrico semantico, rollback deterministico e sincronizzazione multi-cloud.
-          / Git-like version control for QGIS: semantic geometric diffing, deterministic rollback and multi-cloud sync.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/qgis_ledger/">QGIS
+  Ledger</a></td>
+      <td>Controllo versione stile Git per QGIS: diff geometrico semantico,
+      rollback deterministico e sincronizzazione multi-cloud.
+          / Git-like version control for QGIS: semantic geometric diffing,
+          deterministic rollback and multi-cloud sync.</td></tr>
   <tr><td><a href="https://plugins.qgis.org/plugins/q_press/">Q-Press</a></td>
-      <td>Generatore PDF cartografico professionale per QGIS 4/Qt6 con selezione area SHIFT+trascina.
-          / Professional cartographic PDF generator for QGIS 4/Qt6 with Shift+Drag area selection.</td></tr>
-  <tr><td><a href="https://plugins.qgis.org/plugins/crs/">Quick CRS Fixer</a></td>
+      <td>Generatore PDF cartografico professionale per QGIS 4/Qt6 con
+      selezione area SHIFT+trascina.
+          / Professional cartographic PDF generator for QGIS 4/Qt6 with
+          Shift+Drag area selection.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/crs/">Quick CRS
+  Fixer</a></td>
       <td>Rilevamento e correzione automatica dei problemi di CRS.
           / Automatic detection and fixing of CRS problems.</td></tr>
-  <tr><td><a href="https://plugins.qgis.org/plugins/stac_browser/">STAC Browser</a></td>
-      <td>Ricerca dati di osservazione della Terra disegnando un'area o digitando un indirizzo.
-          / Find open Earth-observation data by drawing an area or typing an address.</td></tr>
-  <tr><td><a href="https://plugins.qgis.org/plugins/geobridge/">GeoBridgeIT</a></td>
-      <td>Client QGIS non ufficiale per le API IGM: conversione di coordinate e layer vettoriali.
-          / Unofficial QGIS client for the IGM APIs: coordinate and vector layer conversion.</td></tr>
-  <tr><td><a href="https://plugins.qgis.org/plugins/QGIS_TAF_Plugin/">TAF Italia</a></td>
-      <td>Scarica e converte i Punti Fiduciali (TAF) dell'Agenzia delle Entrate in CSV/WGS84.
-          / Downloads and converts Italian TAF fiducial points to CSV/WGS84.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/stac_browser/">STAC
+  Browser</a></td>
+      <td>Ricerca dati di osservazione della Terra disegnando un'area o
+      digitando un indirizzo.
+          / Find open Earth-observation data by drawing an area or typing an
+          address.</td></tr>
+  <tr><td><a
+  href="https://plugins.qgis.org/plugins/geobridge/">GeoBridgeIT</a></td>
+      <td>Client QGIS non ufficiale per le API IGM: conversione di coordinate
+      e layer vettoriali.
+          / Unofficial QGIS client for the IGM APIs: coordinate and vector
+          layer conversion.</td></tr>
+  <tr><td><a href="https://plugins.qgis.org/plugins/QGIS_TAF_Plugin/">TAF
+  Italia</a></td>
+      <td>Scarica e converte i Punti Fiduciali (TAF) dell'Agenzia delle
+      Entrate in CSV/WGS84.
+          / Downloads and converts Italian TAF fiducial points to
+          CSV/WGS84.</td></tr>
 </table>
 
 <hr class="section-sep"/>
@@ -610,116 +713,205 @@ HELP_HTML = """
 <html>
 <head>
 <style>
-  body { background:#12151e; color:#e2e8f0; font-family:'Segoe UI',Arial,sans-serif;
+  body { background:#12151e; color:#e2e8f0; font-family:'Segoe
+  UI',Arial,sans-serif;
          font-size:12px; margin:16px; line-height:1.62; }
-  h2 { color:#f1f5f9; font-size:17px; margin:0 0 10px; border-bottom:1px solid #2d3757; padding-bottom:6px; }
+  h2 { color:#f1f5f9; font-size:17px; margin:0 0 10px; border-bottom:1px solid
+  #2d3757; padding-bottom:6px; }
   h3 { color:#c7d8ef; font-size:13px; margin:16px 0 6px; }
   p, li { color:#8ba3c7; margin:4px 0; }
-  code { background:#0e1118; color:#e2e8f0; padding:1px 4px; border-radius:3px; }
+  code { background:#0e1118; color:#e2e8f0; padding:1px 4px;
+  border-radius:3px; }
   table { border-collapse:collapse; width:100%; margin:8px 0; }
-  th { background:#1e2437; color:#8ba3c7; padding:7px 10px; text-align:left; border-bottom:2px solid #2d3757; }
-  td { padding:6px 10px; border-bottom:1px solid #2d3757; color:#e2e8f0; vertical-align:top; }
-  .callout { background:#1e2437; border:1px solid #2d3757; border-radius:6px; padding:10px 12px; margin:8px 0 14px; }
+  th { background:#1e2437; color:#8ba3c7; padding:7px 10px; text-align:left;
+  border-bottom:2px solid #2d3757; }
+  td { padding:6px 10px; border-bottom:1px solid #2d3757; color:#e2e8f0;
+  vertical-align:top; }
+  .callout { background:#1e2437; border:1px solid #2d3757; border-radius:6px;
+  padding:10px 12px; margin:8px 0 14px; }
 </style>
 </head>
 <body>
 <h2>HELP COMPLETO / COMPLETE HELP</h2>
 <div class="callout">
-  <p><b>IT:</b> Questo plugin &egrave; pensato come strumento operativo per topografi: profilo longitudinale,
-  sezioni trasversali, sterri, riporti, accumuli, curve, punti, picchetti, tabelle, grafici, raster di supporto
+  <p><b>IT:</b> Questo plugin &egrave; pensato come strumento operativo per
+  topografi: profilo longitudinale,
+  sezioni trasversali, sterri, riporti, accumuli, curve, punti, picchetti,
+  tabelle, grafici, raster di supporto
   e file vettoriali GeoPackage prodotti automaticamente.</p>
-  <p><b>EN:</b> This plugin is intended as an operational surveying tool: longitudinal profile,
-  cross sections, cut/fill/stockpile balance, curves, points, pickets, tables, charts, supporting rasters
+  <p><b>EN:</b> This plugin is intended as an operational surveying tool:
+  longitudinal profile,
+  cross sections, cut/fill/stockpile balance, curves, points, pickets, tables,
+  charts, supporting rasters
   and automatic GeoPackage vector outputs.</p>
 </div>
 
 <h3>1. Preparazione progetto / Project preparation</h3>
 <ul>
-  <li><b>IT:</b> Imposta un CRS di progetto corretto, preferibilmente metrico. Carica un DEM/DTM locale se serve precisione topografica.</li>
-  <li><b>EN:</b> Set a correct project CRS, preferably metric. Load a local DEM/DTM when topographic precision is required.</li>
-  <li><b>IT:</b> I dati API globali sono comodi per analisi preliminari; per lavoro professionale usare raster locali o fonti nazionali citate.</li>
-  <li><b>EN:</b> Global API data are useful for preliminary checks; professional work should use local rasters or the cited national sources.</li>
+  <li><b>IT:</b> Imposta un CRS di progetto corretto, preferibilmente metrico.
+  Carica un DEM/DTM locale se serve precisione topografica.</li>
+  <li><b>EN:</b> Set a correct project CRS, preferably metric. Load a local
+  DEM/DTM when topographic precision is required.</li>
+  <li><b>IT:</b> I dati API globali sono comodi per analisi preliminari; per
+  lavoro professionale usare raster locali o fonti nazionali citate.</li>
+  <li><b>EN:</b> Global API data are useful for preliminary checks;
+  professional work should use local rasters or the cited national
+  sources.</li>
 </ul>
 
 <h3>2. Profilo longitudinale / Longitudinal profile</h3>
 <ol>
-  <li><b>IT:</b> Apri la scheda <code>Profilo</code>, scegli fonte quote e numero campioni. Il default automatico &egrave; adatto a un primo rilievo.</li>
-  <li><b>EN:</b> Open <code>Profile</code>, select elevation source and sample count. Automatic defaults fit a first survey pass.</li>
-  <li><b>IT:</b> Premi <code>Disegna asse</code>, clicca i vertici in mappa e termina con doppio click.</li>
-  <li><b>EN:</b> Click <code>Draw axis</code>, place map vertices and finish with double click.</li>
-  <li><b>IT:</b> Se il DEM ha CRS diverso dal progetto, il plugin trasforma automaticamente i punti nel CRS del raster prima di leggere le quote.</li>
-  <li><b>EN:</b> If the DEM CRS differs from the project CRS, the plugin automatically transforms points into the raster CRS before reading elevations.</li>
-  <li><b>IT:</b> Il plugin genera grafico, tabella campioni, picchetti e GeoPackage con asse, campioni e picchetti.</li>
-  <li><b>EN:</b> The plugin generates chart, sample table, pickets and a GeoPackage with axis, samples and pickets.</li>
-  <li><b>IT:</b> Dopo il tracciamento il plugin chiede se calcolare subito anche sezioni, sterri, riporti e volumi. Se rispondi no, resta solo il profilo.</li>
-  <li><b>EN:</b> After drawing, the plugin asks whether to compute sections, cut/fill and volumes immediately. If you answer no, it keeps only the profile.</li>
+  <li><b>IT:</b> Apri la scheda <code>Profilo</code>, scegli fonte quote e
+  numero campioni. Il default automatico &egrave; adatto a un primo
+  rilievo.</li>
+  <li><b>EN:</b> Open <code>Profile</code>, select elevation source and sample
+  count. Automatic defaults fit a first survey pass.</li>
+  <li><b>IT:</b> Premi <code>Disegna asse</code>, clicca i vertici in mappa e
+  termina con doppio click.</li>
+  <li><b>EN:</b> Click <code>Draw axis</code>, place map vertices and finish
+  with double click.</li>
+  <li><b>IT:</b> Se il DEM ha CRS diverso dal progetto, il plugin trasforma
+  automaticamente i punti nel CRS del raster prima di leggere le quote.</li>
+  <li><b>EN:</b> If the DEM CRS differs from the project CRS, the plugin
+  automatically transforms points into the raster CRS before reading
+  elevations.</li>
+  <li><b>IT:</b> Il plugin genera grafico, tabella campioni, picchetti e
+  GeoPackage con asse, campioni e picchetti.</li>
+  <li><b>EN:</b> The plugin generates chart, sample table, pickets and a
+  GeoPackage with axis, samples and pickets.</li>
+  <li><b>IT:</b> Dopo il tracciamento il plugin chiede se calcolare subito
+  anche sezioni, sterri, riporti e volumi. Se rispondi no, resta solo il
+  profilo.</li>
+  <li><b>EN:</b> After drawing, the plugin asks whether to compute sections,
+  cut/fill and volumes immediately. If you answer no, it keeps only the
+  profile.</li>
 </ol>
 
 <h3>3. Sezioni trasversali / Cross sections</h3>
 <ol>
-  <li><b>IT:</b> Apri <code>Sezioni</code>, seleziona DEM/DTM e scegli se disegnare l'asse o usare un layer linea.</li>
-  <li><b>EN:</b> Open <code>Sections</code>, select DEM/DTM and choose whether to draw the axis or use a line layer.</li>
-  <li><b>IT:</b> Imposta interasse, semi-ampiezza, campioni per sezione, quota iniziale/finale o pendenza di progetto.</li>
-  <li><b>EN:</b> Set interval, half-width, samples per section, design start/end elevation or design grade.</li>
-  <li><b>IT:</b> Il plugin calcola sezioni, aree, sterri, riporti, accumuli/bilancio, metriche pendenza, curve e raggi stimati.</li>
-  <li><b>EN:</b> The plugin computes sections, areas, cut, fill, balance/stockpile, grade metrics, curves and estimated radii.</li>
-  <li><b>IT:</b> Sono creati layer QGIS e GeoPackage: asse, sezioni planimetriche, punti sezione, centri sezione, curve, tratte volumi, disegni tecnici di sezione, poligoni sterro e poligoni riporto.</li>
-  <li><b>EN:</b> QGIS layers and GeoPackage are created: axis, planimetric section lines, section points, section centers, curves, volume segments, technical section drawings, cut polygons and fill polygons.</li>
+  <li><b>IT:</b> Apri <code>Sezioni</code>, seleziona DEM/DTM e scegli se
+  disegnare l'asse o usare un layer linea.</li>
+  <li><b>EN:</b> Open <code>Sections</code>, select DEM/DTM and choose whether
+  to draw the axis or use a line layer.</li>
+  <li><b>IT:</b> Imposta interasse, semi-ampiezza, campioni per sezione, quota
+  iniziale/finale o pendenza di progetto.</li>
+  <li><b>EN:</b> Set interval, half-width, samples per section, design
+  start/end elevation or design grade.</li>
+  <li><b>IT:</b> Il plugin calcola sezioni, aree, sterri, riporti,
+  accumuli/bilancio, metriche pendenza, curve e raggi stimati.</li>
+  <li><b>EN:</b> The plugin computes sections, areas, cut, fill,
+  balance/stockpile, grade metrics, curves and estimated radii.</li>
+  <li><b>IT:</b> Sono creati layer QGIS e GeoPackage: asse, sezioni
+  planimetriche, punti sezione, centri sezione, curve, tratte volumi, disegni
+  tecnici di sezione, poligoni sterro e poligoni riporto.</li>
+  <li><b>EN:</b> QGIS layers and GeoPackage are created: axis, planimetric
+  section lines, section points, section centers, curves, volume segments,
+  technical section drawings, cut polygons and fill polygons.</li>
 </ol>
 
 <h3>4. Download raster / Raster download</h3>
 <ol>
-  <li><b>IT:</b> Apri <code>Download Raster</code>, premi <code>SHIFT + disegna area</code>, tieni premuto Shift e trascina un rettangolo.</li>
-  <li><b>EN:</b> Open <code>Raster Download</code>, click <code>SHIFT + draw area</code>, hold Shift and drag a rectangle.</li>
-  <li><b>IT:</b> Scegli TINITALY 1.1 ZIP ufficiali o HR-DTM-5m Zenodo, indica output GeoTIFF e avvia il ritaglio.</li>
-  <li><b>EN:</b> Choose official TINITALY 1.1 ZIP tiles or Zenodo HR-DTM-5m, set GeoTIFF output and start clipping.</li>
-  <li><b>IT:</b> TINITALY seleziona automaticamente gli ZIP che intersecano l'area, costruisce un VRT temporaneo e ritaglia il GeoTIFF. Il WCS rimane opzionale e non blocca il download.</li>
-  <li><b>EN:</b> TINITALY automatically selects intersecting ZIP tiles, builds a temporary VRT and clips the GeoTIFF. WCS remains optional and does not block download.</li>
-  <li><b>IT:</b> Per Zenodo il plugin usa GDAL /vsicurl con cache/range HTTP quando disponibile e mostra percentuale, velocit&agrave;, tempo trascorso e tempo rimanente.</li>
-  <li><b>EN:</b> For Zenodo the plugin uses GDAL /vsicurl with HTTP range/cache when available and shows percentage, speed, elapsed time and ETA.</li>
-  <li><b>IT:</b> Accanto al raster viene scritta una ricevuta fonte/licenza/citazione.</li>
-  <li><b>EN:</b> A source/license/citation receipt is written next to the raster.</li>
+  <li><b>IT:</b> Apri <code>Download Raster</code>, premi <code>SHIFT +
+  disegna area</code>, tieni premuto Shift e trascina un rettangolo.</li>
+  <li><b>EN:</b> Open <code>Raster Download</code>, click <code>SHIFT + draw
+  area</code>, hold Shift and drag a rectangle.</li>
+  <li><b>IT:</b> Scegli TINITALY 1.1 ZIP ufficiali o HR-DTM-5m Zenodo, indica
+  output GeoTIFF e avvia il ritaglio.</li>
+  <li><b>EN:</b> Choose official TINITALY 1.1 ZIP tiles or Zenodo HR-DTM-5m,
+  set GeoTIFF output and start clipping.</li>
+  <li><b>IT:</b> TINITALY seleziona automaticamente gli ZIP che intersecano
+  l'area, costruisce un VRT temporaneo e ritaglia il GeoTIFF. Il WCS rimane
+  opzionale e non blocca il download.</li>
+  <li><b>EN:</b> TINITALY automatically selects intersecting ZIP tiles, builds
+  a temporary VRT and clips the GeoTIFF. WCS remains optional and does not
+  block download.</li>
+  <li><b>IT:</b> Per Zenodo il plugin usa GDAL /vsicurl con cache/range HTTP
+  quando disponibile e mostra percentuale, velocit&agrave;, tempo trascorso e
+  tempo rimanente.</li>
+  <li><b>EN:</b> For Zenodo the plugin uses GDAL /vsicurl with HTTP
+  range/cache when available and shows percentage, speed, elapsed time and
+  ETA.</li>
+  <li><b>IT:</b> Accanto al raster viene scritta una ricevuta
+  fonte/licenza/citazione.</li>
+  <li><b>EN:</b> A source/license/citation receipt is written next to the
+  raster.</li>
 </ol>
 
 <h3>5. Comuni / Municipalities</h3>
 <ul>
-  <li><b>IT:</b> Cerca un comune, seleziona il risultato e carica il confine rapido OSM/Nominatim.</li>
-  <li><b>EN:</b> Search a municipality, select a result and load the quick OSM/Nominatim boundary.</li>
-  <li><b>IT:</b> Per confini ufficiali usa il pulsante fonte ISTAT e scarica i limiti amministrativi dalla pagina ufficiale.</li>
-  <li><b>EN:</b> For official boundaries use the ISTAT source button and download administrative limits from the official page.</li>
+  <li><b>IT:</b> Cerca un comune, seleziona il risultato e carica il confine
+  rapido OSM/Nominatim.</li>
+  <li><b>EN:</b> Search a municipality, select a result and load the quick
+  OSM/Nominatim boundary.</li>
+  <li><b>IT:</b> Per confini ufficiali usa il pulsante fonte ISTAT e scarica i
+  limiti amministrativi dalla pagina ufficiale.</li>
+  <li><b>EN:</b> For official boundaries use the ISTAT source button and
+  download administrative limits from the official page.</li>
 </ul>
 
 <h3>6. Confronto prima/dopo lavori / Before-after works comparison</h3>
 <ol>
-  <li><b>IT:</b> Apri <code>Confronto</code>. I GeoPackage generati dal plugin nella cartella di output sono elencati automaticamente; usa <code>Aggiorna elenco</code> o i pulsanti <code>...</code> per file esterni.</li>
-  <li><b>EN:</b> Open <code>Comparison</code>. GeoPackages generated by the plugin in the output folder are listed automatically; use <code>Refresh list</code> or the <code>...</code> buttons for external files.</li>
-  <li><b>IT:</b> Scegli il GPKG <b>prima</b> dei lavori e quello <b>dopo</b>, poi premi <code>Confronta GeoPackage</code>: il report mostra variazioni di quota lungo il profilo (con grafico Δ), confronto sezione per sezione e bilancio sterri/riporti.</li>
-  <li><b>EN:</b> Pick the <b>before</b>-works GPKG and the <b>after</b> one, then click <code>Compare GeoPackages</code>: the report shows elevation changes along the profile (with Δ chart), section-by-section comparison and cut/fill balance.</li>
-  <li><b>IT:</b> Le sezioni sono accoppiate per progressiva entro la tolleranza impostata; i profili sono confrontati per interpolazione lineare alle stesse progressive.</li>
-  <li><b>EN:</b> Sections are paired by chainage within the set tolerance; profiles are compared by linear interpolation at the same stations.</li>
-  <li><b>IT:</b> Per il confronto DTM seleziona i due raster (prima/dopo), imposta la soglia di variazione e premi <code>Confronta DTM</code>: viene creato il raster differenza (dopo - prima) con volumi di scavo/riporto e statistiche. Rosso = abbassamento, blu = innalzamento.</li>
-  <li><b>EN:</b> For the DTM comparison select the two rasters (before/after), set the change threshold and click <code>Compare DTMs</code>: a difference raster (after - before) is created with cut/fill volumes and statistics. Red = lowering, blue = raising.</li>
-  <li><b>IT:</b> Tutto il confronto &egrave; matematica deterministica GDAL/NumPy: nessuna AI. Per volumi accurati usa DTM in CRS metrico (es. UTM).</li>
-  <li><b>EN:</b> The whole comparison is deterministic GDAL/NumPy math: no AI. For accurate volumes use DTMs in a metric CRS (e.g. UTM).</li>
+  <li><b>IT:</b> Apri <code>Confronto</code>. I GeoPackage generati dal plugin
+  nella cartella di output sono elencati automaticamente; usa <code>Aggiorna
+  elenco</code> o i pulsanti <code>...</code> per file esterni.</li>
+  <li><b>EN:</b> Open <code>Comparison</code>. GeoPackages generated by the
+  plugin in the output folder are listed automatically; use <code>Refresh
+  list</code> or the <code>...</code> buttons for external files.</li>
+  <li><b>IT:</b> Scegli il GPKG <b>prima</b> dei lavori e quello <b>dopo</b>,
+  poi premi <code>Confronta GeoPackage</code>: il report mostra variazioni di
+  quota lungo il profilo (con grafico Δ), confronto sezione per sezione e
+  bilancio sterri/riporti.</li>
+  <li><b>EN:</b> Pick the <b>before</b>-works GPKG and the <b>after</b> one,
+  then click <code>Compare GeoPackages</code>: the report shows elevation
+  changes along the profile (with Δ chart), section-by-section comparison and
+  cut/fill balance.</li>
+  <li><b>IT:</b> Le sezioni sono accoppiate per progressiva entro la
+  tolleranza impostata; i profili sono confrontati per interpolazione lineare
+  alle stesse progressive.</li>
+  <li><b>EN:</b> Sections are paired by chainage within the set tolerance;
+  profiles are compared by linear interpolation at the same stations.</li>
+  <li><b>IT:</b> Per il confronto DTM seleziona i due raster (prima/dopo),
+  imposta la soglia di variazione e premi <code>Confronta DTM</code>: viene
+  creato il raster differenza (dopo - prima) con volumi di scavo/riporto e
+  statistiche. Rosso = abbassamento, blu = innalzamento.</li>
+  <li><b>EN:</b> For the DTM comparison select the two rasters (before/after),
+  set the change threshold and click <code>Compare DTMs</code>: a difference
+  raster (after - before) is created with cut/fill volumes and statistics. Red
+  = lowering, blue = raising.</li>
+  <li><b>IT:</b> Tutto il confronto &egrave; matematica deterministica
+  GDAL/NumPy: nessuna AI. Per volumi accurati usa DTM in CRS metrico (es.
+  UTM).</li>
+  <li><b>EN:</b> The whole comparison is deterministic GDAL/NumPy math: no AI.
+  For accurate volumes use DTMs in a metric CRS (e.g. UTM).</li>
 </ol>
 
 <h3>7. Output prodotti / Produced outputs</h3>
 <table>
   <tr><th>Output</th><th>Contenuto / Content</th></tr>
-  <tr><td>GeoPackage automatico</td><td>Asse, campioni profilo, picchetti, sezioni planimetriche, punti sezione, centri, curve, volumi per tratta, disegni tecnici di sezione, poligoni sterro/riporto con colore ed etichetta.</td></tr>
+  <tr><td>GeoPackage automatico</td><td>Asse, campioni profilo, picchetti,
+  sezioni planimetriche, punti sezione, centri, curve, volumi per tratta,
+  disegni tecnici di sezione, poligoni sterro/riporto con colore ed
+  etichetta.</td></tr>
   <tr><td>CSV</td><td>Campioni profilo o tabelle sezioni/volumi.</td></tr>
   <tr><td>PNG/PDF</td><td>Grafici e report stampabili.</td></tr>
-  <tr><td>Layout QGIS</td><td>Mappa + grafico per stampa cartografica.</td></tr>
-  <tr><td>GeoTIFF + ricevuta</td><td>Raster ritagliato e file testo con fonte/licenza/citazione.</td></tr>
-  <tr><td>Raster differenza DTM</td><td>GeoTIFF (dopo - prima) con statistiche e volumi scavo/riporto dal confronto DTM.</td></tr>
+  <tr><td>Layout QGIS</td><td>Mappa + grafico per stampa
+  cartografica.</td></tr>
+  <tr><td>GeoTIFF + ricevuta</td><td>Raster ritagliato e file testo con
+  fonte/licenza/citazione.</td></tr>
+  <tr><td>Raster differenza DTM</td><td>GeoTIFF (dopo - prima) con statistiche
+  e volumi scavo/riporto dal confronto DTM.</td></tr>
 </table>
 
 <h3>8. Controlli qualit&agrave; / Quality checks</h3>
 <ul>
-  <li><b>IT:</b> Controlla CRS, unit&agrave; metriche, risoluzione raster, valori NoData e coerenza altimetrica prima di usare i volumi.</li>
-  <li><b>EN:</b> Check CRS, metric units, raster resolution, NoData values and elevation consistency before using volumes.</li>
-  <li><b>IT:</b> Le API globali non sostituiscono rilievo, livellazione, GNSS, LiDAR o DTM ufficiale di progetto.</li>
-  <li><b>EN:</b> Global APIs do not replace survey, leveling, GNSS, LiDAR or official project DTM.</li>
+  <li><b>IT:</b> Controlla CRS, unit&agrave; metriche, risoluzione raster,
+  valori NoData e coerenza altimetrica prima di usare i volumi.</li>
+  <li><b>EN:</b> Check CRS, metric units, raster resolution, NoData values and
+  elevation consistency before using volumes.</li>
+  <li><b>IT:</b> Le API globali non sostituiscono rilievo, livellazione, GNSS,
+  LiDAR o DTM ufficiale di progetto.</li>
+  <li><b>EN:</b> Global APIs do not replace survey, leveling, GNSS, LiDAR or
+  official project DTM.</li>
 </ul>
 </body>
 </html>
@@ -729,6 +921,7 @@ HELP_HTML = """
 # ──────────────────────────────────────────────────────────────────────
 # Main Dialog
 # ──────────────────────────────────────────────────────────────────────
+
 
 class ProfiliSezioniComuniDialog(QDialog):
 
@@ -765,7 +958,12 @@ class ProfiliSezioniComuniDialog(QDialog):
         pix = QPixmap(os.path.join(os.path.dirname(__file__), "icon.svg"))
         if not pix.isNull():
             logo_lbl.setPixmap(
-                pix.scaled(52, 52, QtCompat.KeepAspectRatio, QtCompat.SmoothTransformation)
+                pix.scaled(
+                    52,
+                    52,
+                    QtCompat.KeepAspectRatio,
+                    QtCompat.SmoothTransformation,
+                )
             )
         header_row.addWidget(logo_lbl)
         title_box = QVBoxLayout()
@@ -847,6 +1045,10 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.btn_export_vectors.setObjectName("btnExportVectors")
         self.btn_export_vectors.setEnabled(False)
 
+        self.btn_export_dxf = QPushButton()
+        self.btn_export_dxf.setObjectName("btnExportDxf")
+        self.btn_export_dxf.setEnabled(False)
+
         self.btn_print_layout = QPushButton()
         self.btn_print_layout.setObjectName("btnPrintLayout")
         self.btn_print_layout.setEnabled(False)
@@ -855,6 +1057,7 @@ class ProfiliSezioniComuniDialog(QDialog):
         export_bar.addWidget(self.btn_export_pdf)
         export_bar.addWidget(self.btn_export_csv)
         export_bar.addWidget(self.btn_export_vectors)
+        export_bar.addWidget(self.btn_export_dxf)
         export_bar.addStretch()
         export_bar.addWidget(self.btn_print_layout)
         main_layout.addLayout(export_bar)
@@ -919,9 +1122,13 @@ class ProfiliSezioniComuniDialog(QDialog):
         # Info link
         self.lbl_provider_info = QLabel()
         self.lbl_provider_info.setOpenExternalLinks(False)
-        self.lbl_provider_info.setStyleSheet("color: #00e5ff; font-size: 11px;")
+        self.lbl_provider_info.setStyleSheet(
+            "color: #00e5ff; font-size: 11px;"
+        )
         self.lbl_provider_info.setCursor(QtCompat.PointingHandCursor)
-        self.lbl_provider_info.mousePressEvent = lambda _e: self.tabs.setCurrentIndex(self.TAB_INFO)
+        self.lbl_provider_info.mousePressEvent = (
+            lambda _e: self.tabs.setCurrentIndex(self.TAB_INFO)
+        )
         src_layout.addWidget(self.lbl_provider_info)
 
         layout.addWidget(src_group)
@@ -933,7 +1140,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         layout.addLayout(row_btn)
         layout.addStretch()
 
-        self.cb_source.currentIndexChanged.connect(self._toggle_prof_visibility)
+        self.cb_source.currentIndexChanged.connect(
+            self._toggle_prof_visibility
+        )
 
     def _build_tab_sezioni(self):
         layout = QVBoxLayout(self.tab_sez)
@@ -963,7 +1172,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         row_line.addWidget(self.lbl_feature)
         self.cb_line_feature = QComboBox()
         self.cb_line_feature.addItem("Prima feature / First feature", "first")
-        self.cb_line_feature.addItem("Linea più lunga / Longest line", "longest")
+        self.cb_line_feature.addItem(
+            "Linea più lunga / Longest line", "longest"
+        )
         row_line.addWidget(self.cb_line_feature)
         self.btn_layer_sez = QPushButton()
         row_line.addWidget(self.btn_layer_sez)
@@ -1030,7 +1241,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         layout.addWidget(input_group)
         layout.addStretch()
 
-        self.cb_axis_source.currentIndexChanged.connect(self._toggle_sez_visibility)
+        self.cb_axis_source.currentIndexChanged.connect(
+            self._toggle_sez_visibility
+        )
 
     def _build_tab_comuni(self):
         layout = QVBoxLayout(self.tab_comuni)
@@ -1143,13 +1356,17 @@ class ProfiliSezioniComuniDialog(QDialog):
         area_layout.addLayout(action_row)
 
         self.lbl_download_status = QLabel("")
-        self.lbl_download_status.setStyleSheet("color:#566584; font-size:11px;")
+        self.lbl_download_status.setStyleSheet(
+            "color:#566584; font-size:11px;"
+        )
         area_layout.addWidget(self.lbl_download_status)
 
         layout.addWidget(area_group)
         layout.addStretch()
 
-        self.cb_raster_source.currentIndexChanged.connect(self._update_raster_source_info)
+        self.cb_raster_source.currentIndexChanged.connect(
+            self._update_raster_source_info
+        )
 
     def _build_tab_confronto(self):
         layout = QVBoxLayout(self.tab_confronto)
@@ -1253,7 +1470,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         layout.addWidget(self.lbl_confronto_note)
 
         self.lbl_confronto_status = QLabel("")
-        self.lbl_confronto_status.setStyleSheet("color:#566584; font-size:11px;")
+        self.lbl_confronto_status.setStyleSheet(
+            "color:#566584; font-size:11px;"
+        )
         self.lbl_confronto_status.setWordWrap(True)
         layout.addWidget(self.lbl_confronto_status)
         layout.addStretch()
@@ -1273,6 +1492,7 @@ class ProfiliSezioniComuniDialog(QDialog):
 
     def _browse_confronto_gpkg(self, combo):
         from qgis.PyQt.QtWidgets import QFileDialog
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             _t(self.lang, "Seleziona GeoPackage", "Select GeoPackage"),
@@ -1284,6 +1504,7 @@ class ProfiliSezioniComuniDialog(QDialog):
 
     def _browse_confronto_raster(self, combo):
         from qgis.PyQt.QtWidgets import QFileDialog
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             _t(self.lang, "Seleziona DTM raster", "Select raster DTM"),
@@ -1316,8 +1537,14 @@ class ProfiliSezioniComuniDialog(QDialog):
                 combo.setCurrentIndex(idx)
             combo.blockSignals(False)
         # sensible default: oldest as "before", newest as "after"
-        if gpkg_paths and self.cb_gpkg_before.currentData() == self.cb_gpkg_after.currentData():
-            self.cb_gpkg_before.setCurrentIndex(self.cb_gpkg_before.count() - 1)
+        if (
+            gpkg_paths
+            and self.cb_gpkg_before.currentData()
+            == self.cb_gpkg_after.currentData()
+        ):
+            self.cb_gpkg_before.setCurrentIndex(
+                self.cb_gpkg_before.count() - 1
+            )
             self.cb_gpkg_after.setCurrentIndex(0)
 
     def populate_confronto_rasters(self):
@@ -1344,10 +1571,14 @@ class ProfiliSezioniComuniDialog(QDialog):
             combo.blockSignals(False)
 
     def get_confronto_gpkg_paths(self):
-        return self.cb_gpkg_before.currentData(), self.cb_gpkg_after.currentData()
+        return (
+            self.cb_gpkg_before.currentData(),
+            self.cb_gpkg_after.currentData(),
+        )
 
     def get_confronto_dtm_paths(self):
-        """Resolve the selected DTMs to file paths (project layer or browsed file)."""
+        """Resolve the selected DTMs to file paths (project layer or browsed
+        file)."""
         paths = []
         for combo in (self.cb_dtm_before, self.cb_dtm_after):
             data = combo.currentData()
@@ -1372,10 +1603,14 @@ class ProfiliSezioniComuniDialog(QDialog):
         form.setSpacing(9)
 
         self.le_param_peg = QLineEdit("Peg / Picchetto")
-        self.le_param_progressive = QLineEdit("Progressive distances / Distanze progressive")
+        self.le_param_progressive = QLineEdit(
+            "Progressive distances / Distanze progressive"
+        )
         self.le_param_ground = QLineEdit("Ground Level / Quota terreno")
         self.le_param_pipe = QLineEdit("Pipe Levels / Quote tubo")
-        self.le_param_excavation = QLineEdit("Bottom Excavation Level / Fondo scavo")
+        self.le_param_excavation = QLineEdit(
+            "Bottom Excavation Level / Fondo scavo"
+        )
         self.le_param_cut = QLineEdit("Cut / Sterro")
         self.le_param_fill = QLineEdit("Fill / Riporto")
         self.le_param_stockpile = QLineEdit("Stockpiles / Accumuli")
@@ -1450,10 +1685,12 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.web_view = None
         try:
             from qgis.PyQt.QtWebEngineWidgets import QWebEngineView
+
             self.web_view = QWebEngineView()
         except ImportError:
             try:
                 from qgis.PyQt.QtWebKitWidgets import QWebView
+
                 self.web_view = QWebView()
             except ImportError:
                 pass
@@ -1498,25 +1735,46 @@ class ProfiliSezioniComuniDialog(QDialog):
 
     def _update_ui_lang(self):
         L = self.lang
-        self.lbl_header.setText(_t(L, "Profili, Sezioni e Comuni", "Profiles, Sections & Municipalities"))
+        self.lbl_header.setText(
+            _t(
+                L,
+                "Profili, Sezioni e Comuni",
+                "Profiles, Sections & Municipalities",
+            )
+        )
         self.lbl_subtitle.setText(
             _t(
                 L,
-                "Profili altimetrici, sezioni, sterri/riporti, comuni e download raster",
-                "Elevation profiles, cross sections, cut/fill, municipalities and raster download",
+                "Profili altimetrici, sezioni, sterri/riporti, comuni e "
+                "download raster",
+                "Elevation profiles, cross sections, cut/fill, municipalities "
+                "and raster download",
             )
         )
-        self.setWindowTitle(_t(L, "GeoFusion — Profili, Sezioni e Comuni",
-                               "GeoFusion — Profiles, Sections & Municipalities"))
+        self.setWindowTitle(
+            _t(
+                L,
+                "GeoFusion — Profili, Sezioni e Comuni",
+                "GeoFusion — Profiles, Sections & Municipalities",
+            )
+        )
         self.btn_close.setText(_t(L, "Chiudi", "Close"))
 
         # Tab labels
         self.tabs.setTabText(self.TAB_PROFILO, _t(L, "Profilo", "Profile"))
         self.tabs.setTabText(self.TAB_SEZIONI, _t(L, "Sezioni", "Sections"))
-        self.tabs.setTabText(self.TAB_COMUNI, _t(L, "Comuni", "Municipalities"))
-        self.tabs.setTabText(self.TAB_DOWNLOAD, _t(L, "Download Raster", "Raster Download"))
-        self.tabs.setTabText(self.TAB_CONFRONTO, _t(L, "Confronto", "Comparison"))
-        self.tabs.setTabText(self.TAB_PARAMETRI, _t(L, "Parametri", "Parameters"))
+        self.tabs.setTabText(
+            self.TAB_COMUNI, _t(L, "Comuni", "Municipalities")
+        )
+        self.tabs.setTabText(
+            self.TAB_DOWNLOAD, _t(L, "Download Raster", "Raster Download")
+        )
+        self.tabs.setTabText(
+            self.TAB_CONFRONTO, _t(L, "Confronto", "Comparison")
+        )
+        self.tabs.setTabText(
+            self.TAB_PARAMETRI, _t(L, "Parametri", "Parameters")
+        )
         self.tabs.setTabText(self.TAB_RISULTATI, _t(L, "Risultati", "Results"))
         self.tabs.setTabText(self.TAB_HELP, "Help")
         self.tabs.setTabText(self.TAB_INFO, "Info")
@@ -1537,16 +1795,26 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.cb_source.blockSignals(True)
         self.cb_source.clear()
         self.cb_source.addItem(
-            _t(L, "Open-Elevation API (SRTM/NASA)", "Open-Elevation API (SRTM/NASA)"),
-            "provider_openelev"
+            _t(
+                L,
+                "Open-Elevation API (SRTM/NASA)",
+                "Open-Elevation API (SRTM/NASA)",
+            ),
+            "provider_openelev",
         )
         self.cb_source.addItem(
-            _t(L, "OpenTopoData API (SRTM 90m)", "OpenTopoData API (SRTM 90m)"),
-            "provider_opentopo"
+            _t(
+                L, "OpenTopoData API (SRTM 90m)", "OpenTopoData API (SRTM 90m)"
+            ),
+            "provider_opentopo",
         )
         self.cb_source.addItem(
-            _t(L, "Layer Raster (DEM/DTM locale)", "Raster Layer (local DEM/DTM)"),
-            "raster"
+            _t(
+                L,
+                "Layer Raster (DEM/DTM locale)",
+                "Raster Layer (local DEM/DTM)",
+            ),
+            "raster",
         )
         # restore selection
         idx = self.cb_source.findData(cur)
@@ -1563,22 +1831,34 @@ class ProfiliSezioniComuniDialog(QDialog):
         cur_ax = self.cb_axis_source.currentData()
         self.cb_axis_source.blockSignals(True)
         self.cb_axis_source.clear()
-        self.cb_axis_source.addItem(_t(L, "Disegna sulla mappa", "Draw on map"), "draw")
-        self.cb_axis_source.addItem(_t(L, "Layer linea / Line layer", "Line layer"), "layer")
+        self.cb_axis_source.addItem(
+            _t(L, "Disegna sulla mappa", "Draw on map"), "draw"
+        )
+        self.cb_axis_source.addItem(
+            _t(L, "Layer linea / Line layer", "Line layer"), "layer"
+        )
         idx_ax = self.cb_axis_source.findData(cur_ax)
         if idx_ax >= 0:
             self.cb_axis_source.setCurrentIndex(idx_ax)
         self.cb_axis_source.blockSignals(False)
 
         self.lbl_line_layer.setText(_t(L, "Layer linea:", "Line layer:"))
-        self.btn_layer_sez.setText(_t(L, "Calcola da layer", "Calculate from layer"))
-        self.lbl_start_elev.setText(_t(L, "Quota Inizio (m):", "Start Elev (m):"))
+        self.btn_layer_sez.setText(
+            _t(L, "Calcola da layer", "Calculate from layer")
+        )
+        self.lbl_start_elev.setText(
+            _t(L, "Quota Inizio (m):", "Start Elev (m):")
+        )
         self.lbl_end_elev.setText(_t(L, "Quota Fine (m):", "End Elev (m):"))
         self.lbl_grade.setText(_t(L, "Pend. (%):", "Grade (%):"))
         self.lbl_interval.setText(_t(L, "Interasse (m):", "Interval (m):"))
-        self.lbl_halfwidth.setText(_t(L, "Semi-ampiezza (m):", "Half-width (m):"))
+        self.lbl_halfwidth.setText(
+            _t(L, "Semi-ampiezza (m):", "Half-width (m):")
+        )
         self.lbl_samples_sez.setText(_t(L, "Campioni/sez.:", "Samples/sec.:"))
-        self.chk_smooth.setText(_t(L, "Raccorda tangenti curve", "Smooth curve tangents"))
+        self.chk_smooth.setText(
+            _t(L, "Raccorda tangenti curve", "Smooth curve tangents")
+        )
         self.btn_draw_sez.setText(_t(L, "Disegna asse", "Draw axis"))
 
         # Tab Comuni
@@ -1586,7 +1866,11 @@ class ProfiliSezioniComuniDialog(QDialog):
         if grp_com:
             grp_com.setTitle(_t(L, "Ricerca comune", "Municipality search"))
         self.le_comuni_search.setPlaceholderText(
-            _t(L, "Nome comune... / Municipality name...", "Municipality name...")
+            _t(
+                L,
+                "Nome comune... / Municipality name...",
+                "Municipality name...",
+            )
         )
         self.btn_comuni_search.setText(_t(L, "Cerca", "Search"))
         self.btn_comuni_load.setText(
@@ -1602,7 +1886,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         # Tab Download Raster
         grp_down = self.tab_download.findChild(QGroupBox, "grpDownloadArea")
         if grp_down:
-            grp_down.setTitle(_t(L, "Area e sorgente raster", "Area and raster source"))
+            grp_down.setTitle(
+                _t(L, "Area e sorgente raster", "Area and raster source")
+            )
         self.btn_draw_area.setText(
             _t(L, "SHIFT + disegna area", "SHIFT + draw area")
         )
@@ -1610,19 +1896,33 @@ class ProfiliSezioniComuniDialog(QDialog):
             self.lbl_download_area.setText(
                 _t(
                     L,
-                    "Nessuna area selezionata. Tieni premuto SHIFT, trascina un rettangolo sulla mappa e rilascia.",
-                    "No area selected. Hold SHIFT, drag a rectangle on the map and release.",
+                    "Nessuna area selezionata. Tieni premuto SHIFT, trascina "
+                    "un rettangolo sulla mappa e rilascia.",
+                    "No area selected. Hold SHIFT, drag a rectangle on the "
+                    "map and release.",
                 )
             )
         self.lbl_raster_source.setText(_t(L, "Sorgente:", "Source:"))
         self.btn_open_raster_source.setText(_t(L, "Apri fonte", "Open source"))
-        self.btn_add_tinitaly_wcs.setText(_t(L, "Carica WCS TINITALY", "Load TINITALY WCS"))
-        self.lbl_download_output.setText(_t(L, "Output GeoTIFF:", "Output GeoTIFF:"))
-        self.btn_browse_download_output.setText(_t(L, "Sfoglia...", "Browse..."))
-        self.chk_load_downloaded_raster.setText(
-            _t(L, "Carica raster in QGIS dopo il download", "Load raster in QGIS after download")
+        self.btn_add_tinitaly_wcs.setText(
+            _t(L, "Carica WCS TINITALY", "Load TINITALY WCS")
         )
-        self.btn_download_raster.setText(_t(L, "Scarica area raster", "Download raster area"))
+        self.lbl_download_output.setText(
+            _t(L, "Output GeoTIFF:", "Output GeoTIFF:")
+        )
+        self.btn_browse_download_output.setText(
+            _t(L, "Sfoglia...", "Browse...")
+        )
+        self.chk_load_downloaded_raster.setText(
+            _t(
+                L,
+                "Carica raster in QGIS dopo il download",
+                "Load raster in QGIS after download",
+            )
+        )
+        self.btn_download_raster.setText(
+            _t(L, "Scarica area raster", "Download raster area")
+        )
 
         cur_src = self.cb_raster_source.currentData()
         self.cb_raster_source.blockSignals(True)
@@ -1639,37 +1939,59 @@ class ProfiliSezioniComuniDialog(QDialog):
         grp_conf_gpkg = self.tab_confronto.findChild(QGroupBox, "grpConfGpkg")
         if grp_conf_gpkg:
             grp_conf_gpkg.setTitle(
-                _t(L, "Confronto GeoPackage (prima / dopo lavori)",
-                   "GeoPackage comparison (before / after works)")
+                _t(
+                    L,
+                    "Confronto GeoPackage (prima / dopo lavori)",
+                    "GeoPackage comparison (before / after works)",
+                )
             )
         grp_conf_dtm = self.tab_confronto.findChild(QGroupBox, "grpConfDtm")
         if grp_conf_dtm:
             grp_conf_dtm.setTitle(
-                _t(L, "Confronto DTM (differenza raster)",
-                   "DTM comparison (raster difference)")
+                _t(
+                    L,
+                    "Confronto DTM (differenza raster)",
+                    "DTM comparison (raster difference)",
+                )
             )
         self.lbl_conf_gpkg_before.setText(_t(L, "GPKG prima:", "GPKG before:"))
         self.lbl_conf_gpkg_after.setText(_t(L, "GPKG dopo:", "GPKG after:"))
         self.btn_refresh_gpkg.setText(_t(L, "Aggiorna elenco", "Refresh list"))
-        self.lbl_conf_tolerance.setText(_t(L, "Tolleranza (m):", "Tolerance (m):"))
-        self.btn_compare_gpkg.setText(_t(L, "Confronta GeoPackage", "Compare GeoPackages"))
+        self.lbl_conf_tolerance.setText(
+            _t(L, "Tolleranza (m):", "Tolerance (m):")
+        )
+        self.btn_compare_gpkg.setText(
+            _t(L, "Confronta GeoPackage", "Compare GeoPackages")
+        )
         self.lbl_conf_dtm_before.setText(_t(L, "DTM prima:", "DTM before:"))
         self.lbl_conf_dtm_after.setText(_t(L, "DTM dopo:", "DTM after:"))
-        self.lbl_dtm_threshold.setText(_t(L, "Soglia Δ (m):", "Δ threshold (m):"))
+        self.lbl_dtm_threshold.setText(
+            _t(L, "Soglia Δ (m):", "Δ threshold (m):")
+        )
         self.chk_load_diff_raster.setText(
-            _t(L, "Carica raster differenza in QGIS", "Load difference raster in QGIS")
+            _t(
+                L,
+                "Carica raster differenza in QGIS",
+                "Load difference raster in QGIS",
+            )
         )
         self.btn_compare_dtm.setText(_t(L, "Confronta DTM", "Compare DTMs"))
         self.lbl_confronto_note.setText(
             _t(
                 L,
-                "Confronta i GeoPackage generati dal plugin sulla stessa area (profilo/sezioni prima "
-                "dei lavori vs dopo i lavori): variazioni di quota, aree e volumi. Il confronto DTM "
-                "calcola il raster differenza (dopo - prima) con volumi di scavo/riporto. "
+                "Confronta i GeoPackage generati dal plugin sulla stessa area "
+                "(profilo/sezioni prima "
+                "dei lavori vs dopo i lavori): variazioni di quota, aree e "
+                "volumi. Il confronto DTM "
+                "calcola il raster differenza (dopo - prima) con volumi di "
+                "scavo/riporto. "
                 "Calcolo deterministico, senza AI.",
-                "Compares GeoPackages generated by the plugin over the same area (profile/sections "
-                "before vs after the works): elevation, area and volume changes. The DTM comparison "
-                "computes the difference raster (after - before) with cut/fill volumes. "
+                "Compares GeoPackages generated by the plugin over the same "
+                "area (profile/sections "
+                "before vs after the works): elevation, area and volume "
+                "changes. The DTM comparison "
+                "computes the difference raster (after - before) with "
+                "cut/fill volumes. "
                 "Deterministic computation, no AI.",
             )
         )
@@ -1677,40 +1999,75 @@ class ProfiliSezioniComuniDialog(QDialog):
         # Tab Parametri
         grp_params = self.tab_parametri.findChild(QGroupBox, "grpParamLabels")
         if grp_params:
-            grp_params.setTitle(_t(L, "Etichette report e grafici", "Report and chart labels"))
+            grp_params.setTitle(
+                _t(L, "Etichette report e grafici", "Report and chart labels")
+            )
         grp_ins = self.tab_parametri.findChild(QGroupBox, "grpParamInsertion")
         if grp_ins:
             grp_ins.setTitle(_t(L, "Punto di inserimento", "Insertion point"))
-        self.lbl_param_peg.setText(_t(L, "Picchetto / Peg:", "Peg / Picchetto:"))
-        self.lbl_param_progressive.setText(
-            _t(L, "Distanze progressive / Progressive distances:", "Progressive distances / Distanze progressive:")
+        self.lbl_param_peg.setText(
+            _t(L, "Picchetto / Peg:", "Peg / Picchetto:")
         )
-        self.lbl_param_ground.setText(_t(L, "Quota terreno / Ground Level:", "Ground Level / Quota terreno:"))
-        self.lbl_param_pipe.setText(_t(L, "Quote tubo / Pipe Levels:", "Pipe Levels / Quote tubo:"))
+        self.lbl_param_progressive.setText(
+            _t(
+                L,
+                "Distanze progressive / Progressive distances:",
+                "Progressive distances / Distanze progressive:",
+            )
+        )
+        self.lbl_param_ground.setText(
+            _t(
+                L,
+                "Quota terreno / Ground Level:",
+                "Ground Level / Quota terreno:",
+            )
+        )
+        self.lbl_param_pipe.setText(
+            _t(L, "Quote tubo / Pipe Levels:", "Pipe Levels / Quote tubo:")
+        )
         self.lbl_param_excavation.setText(
-            _t(L, "Fondo scavo / Bottom Excavation Level:", "Bottom Excavation Level / Fondo scavo:")
+            _t(
+                L,
+                "Fondo scavo / Bottom Excavation Level:",
+                "Bottom Excavation Level / Fondo scavo:",
+            )
         )
         self.lbl_param_cut.setText(_t(L, "Sterro / Cut:", "Cut / Sterro:"))
-        self.lbl_param_fill.setText(_t(L, "Riporto / Fill:", "Fill / Riporto:"))
-        self.lbl_param_stockpile.setText(_t(L, "Accumuli / Stockpiles:", "Stockpiles / Accumuli:"))
+        self.lbl_param_fill.setText(
+            _t(L, "Riporto / Fill:", "Fill / Riporto:")
+        )
+        self.lbl_param_stockpile.setText(
+            _t(L, "Accumuli / Stockpiles:", "Stockpiles / Accumuli:")
+        )
         self.lbl_insertion_x.setText("X:")
         self.lbl_insertion_y.setText("Y:")
         self.lbl_param_note.setText(
             _t(
                 L,
-                "Queste etichette sono usate per impostare la grafia dei report e ricordano i parametri della schermata di riferimento. Include sterri, riporti e accumuli.",
-                "These labels control report wording and mirror the reference screenshot parameters. Cut, fill and stockpiles are included.",
+                "Queste etichette sono usate per impostare la grafia dei "
+                "report e ricordano i parametri della schermata di "
+                "riferimento. Include sterri, riporti e accumuli.",
+                "These labels control report wording and mirror the reference "
+                "screenshot parameters. Cut, fill and stockpiles are "
+                "included.",
             )
         )
-        self.btn_params_reset.setText(_t(L, "Ripristina default", "Reset defaults"))
-        self.btn_auto_defaults.setText(_t(L, "Settaggi automatici", "Automatic settings"))
-        self.btn_params_save.setText(_t(L, "Salva parametri", "Save parameters"))
+        self.btn_params_reset.setText(
+            _t(L, "Ripristina default", "Reset defaults")
+        )
+        self.btn_auto_defaults.setText(
+            _t(L, "Settaggi automatici", "Automatic settings")
+        )
+        self.btn_params_save.setText(
+            _t(L, "Salva parametri", "Save parameters")
+        )
 
         # Export buttons
         self.btn_export_png.setText(_t(L, "Esporta PNG", "Export PNG"))
         self.btn_export_pdf.setText(_t(L, "Esporta PDF", "Export PDF"))
         self.btn_export_csv.setText(_t(L, "Esporta CSV", "Export CSV"))
         self.btn_export_vectors.setText(_t(L, "Esporta GPKG", "Export GPKG"))
+        self.btn_export_dxf.setText(_t(L, "Esporta DXF", "Export DXF"))
         self.btn_print_layout.setText(_t(L, "Stampa Layout", "Print Layout"))
 
         self.lbl_status.setText(_t(L, "Pronto.", "Ready."))
@@ -1732,7 +2089,9 @@ class ProfiliSezioniComuniDialog(QDialog):
 
     def _update_raster_source_info(self):
         source_key = self.cb_raster_source.currentData() or "tinitaly"
-        self.lbl_raster_source_info.setText(source_info_text(source_key, self.lang))
+        self.lbl_raster_source_info.setText(
+            source_info_text(source_key, self.lang)
+        )
 
     def set_download_area(self, area_points, bbox_label):
         self._download_area_points = area_points
@@ -1751,13 +2110,18 @@ class ProfiliSezioniComuniDialog(QDialog):
     def get_parameter_labels(self):
         return {
             "peg": self.le_param_peg.text().strip() or "Peg / Picchetto",
-            "progressive": self.le_param_progressive.text().strip() or "Progressive distances / Distanze progressive",
-            "ground": self.le_param_ground.text().strip() or "Ground Level / Quota terreno",
-            "pipe": self.le_param_pipe.text().strip() or "Pipe Levels / Quote tubo",
-            "excavation": self.le_param_excavation.text().strip() or "Bottom Excavation Level / Fondo scavo",
+            "progressive": self.le_param_progressive.text().strip()
+            or "Progressive distances / Distanze progressive",
+            "ground": self.le_param_ground.text().strip()
+            or "Ground Level / Quota terreno",
+            "pipe": self.le_param_pipe.text().strip()
+            or "Pipe Levels / Quote tubo",
+            "excavation": self.le_param_excavation.text().strip()
+            or "Bottom Excavation Level / Fondo scavo",
             "cut": self.le_param_cut.text().strip() or "Cut / Sterro",
             "fill": self.le_param_fill.text().strip() or "Fill / Riporto",
-            "stockpile": self.le_param_stockpile.text().strip() or "Stockpiles / Accumuli",
+            "stockpile": self.le_param_stockpile.text().strip()
+            or "Stockpiles / Accumuli",
             "insertion_x": self.sb_insertion_x.value(),
             "insertion_y": self.sb_insertion_y.value(),
         }
@@ -1793,12 +2157,23 @@ class ProfiliSezioniComuniDialog(QDialog):
     def _save_parameter_settings(self):
         s = self._settings()
         labels = self.get_parameter_labels()
-        for key in ("peg", "progressive", "ground", "pipe", "excavation", "cut", "fill", "stockpile"):
+        for key in (
+            "peg",
+            "progressive",
+            "ground",
+            "pipe",
+            "excavation",
+            "cut",
+            "fill",
+            "stockpile",
+        ):
             s.setValue("labels/{0}".format(key), labels[key])
         s.setValue("insertion/x", labels["insertion_x"])
         s.setValue("insertion/y", labels["insertion_y"])
         s.endGroup()
-        self.lbl_status.setText(_t(self.lang, "Parametri salvati.", "Parameters saved."))
+        self.lbl_status.setText(
+            _t(self.lang, "Parametri salvati.", "Parameters saved.")
+        )
 
     def _reset_parameter_settings(self):
         defaults = {
@@ -1834,7 +2209,11 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.le_grade_pct.clear()
         self._reset_parameter_settings()
         self.lbl_status.setText(
-            _t(self.lang, "Settaggi automatici topografici applicati.", "Automatic surveying settings applied.")
+            _t(
+                self.lang,
+                "Settaggi automatici topografici applicati.",
+                "Automatic surveying settings applied.",
+            )
         )
 
     # ──────────────────────────────────────────────────────────────
@@ -1856,8 +2235,11 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.populate_confronto_rasters()
 
     def get_selected_raster(self, for_sezioni=False):
-        layer_id = (self.cb_raster_sez.currentData() if for_sezioni
-                    else self.cb_raster_prof.currentData())
+        layer_id = (
+            self.cb_raster_sez.currentData()
+            if for_sezioni
+            else self.cb_raster_prof.currentData()
+        )
         if layer_id:
             return QgsProject.instance().mapLayer(layer_id)
         return None
@@ -1874,11 +2256,14 @@ class ProfiliSezioniComuniDialog(QDialog):
 
     def do_comuni_search(self):
         from .core_comuni import search_comuni
+
         query = self.le_comuni_search.text().strip()
         if not query:
             return
         L = self.lang
-        self.lbl_comuni_status.setText(_t(L, "Ricerca in corso...", "Searching..."))
+        self.lbl_comuni_status.setText(
+            _t(L, "Ricerca in corso...", "Searching...")
+        )
         QApplication.processEvents()
         try:
             results = search_comuni(query, limit=15)
@@ -1903,7 +2288,11 @@ class ProfiliSezioniComuniDialog(QDialog):
                 item.setData(QtCompat.UserRole, r)
                 self.list_comuni.addItem(item)
             self.lbl_comuni_status.setText(
-                _t(L, f"{len(results)} risultati trovati.", f"{len(results)} results found.")
+                _t(
+                    L,
+                    f"{len(results)} risultati trovati.",
+                    f"{len(results)} results found.",
+                )
             )
         except Exception as e:
             self.lbl_comuni_status.setText(
@@ -1927,13 +2316,15 @@ class ProfiliSezioniComuniDialog(QDialog):
             f"<b>{comune.get('name', '')}</b><br>"
             f"{_t(L, 'Regione', 'Region')}: {region}<br>"
             f"{_t(L, 'Provincia', 'Province')}: {province}<br>"
-            f"{_t(L, 'Posizione', 'Position')}: {comune.get('lat', 0):.5f}, {comune.get('lon', 0):.5f}"
+            f"{_t(L, 'Posizione', 'Position')}: {comune.get('lat', 0):.5f}, "
+            f"{comune.get('lon', 0):.5f}"
         )
 
     def do_load_boundary(self):
         if not self._selected_comune:
             return
         from .core_comuni import fetch_comune_boundary, create_boundary_layer
+
         L = self.lang
         comune = self._selected_comune
         self.lbl_comuni_status.setText(
@@ -1942,12 +2333,15 @@ class ProfiliSezioniComuniDialog(QDialog):
         QApplication.processEvents()
         try:
             feature = fetch_comune_boundary(
-                comune.get("osm_type", "relation"),
-                comune.get("osm_id", "")
+                comune.get("osm_type", "relation"), comune.get("osm_id", "")
             )
             if feature is None:
                 self.lbl_comuni_status.setText(
-                    _t(L, "Confine non disponibile su OSM.", "Boundary not available on OSM.")
+                    _t(
+                        L,
+                        "Confine non disponibile su OSM.",
+                        "Boundary not available on OSM.",
+                    )
                 )
                 return
             name = comune.get("name", "Comune")
@@ -1970,11 +2364,15 @@ class ProfiliSezioniComuniDialog(QDialog):
         <html><head><style>
             body {{ margin:0; padding:40px; background:#12151e;
                    font-family:'Segoe UI','Inter',sans-serif; color:#566584;
-                   display:flex; align-items:center; justify-content:center; min-height:300px; }}
+                   display:flex; align-items:center; justify-content:center;
+                   min-height:300px; }}
             .placeholder {{ text-align:center; }}
-            .placeholder .icon {{ font-size:48px; margin-bottom:16px; opacity:.4; }}
-            .placeholder h3 {{ color:#8ba3c7; font-size:18px; margin:0 0 8px; }}
-            .placeholder p  {{ color:#566584; font-size:13px; margin:0; line-height:1.6; }}
+            .placeholder .icon {{ font-size:48px; margin-bottom:16px;
+                                  opacity:.4; }}
+            .placeholder h3 {{ color:#8ba3c7; font-size:18px;
+                               margin:0 0 8px; }}
+            .placeholder p  {{ color:#566584; font-size:13px; margin:0;
+                               line-height:1.6; }}
         </style></head><body>
         <div class="placeholder">
             <div class="icon">📐</div>
@@ -1996,13 +2394,18 @@ class ProfiliSezioniComuniDialog(QDialog):
         full_html = f"""<!DOCTYPE html>
         <html><head><style>
             body {{ margin:0; padding:16px; background:#12151e;
-                   font-family:'Segoe UI','Inter',sans-serif; color:#e2e8f0; line-height:1.5; }}
+                   font-family:'Segoe UI','Inter',sans-serif; color:#e2e8f0;
+                   line-height:1.5; }}
             svg {{ max-width:100%; height:auto; }}
-            table {{ border-collapse:collapse; width:100%; font-size:12px; margin-top:8px; }}
-            th {{ background:#1e2437; color:#8ba3c7; padding:8px 10px; text-align:left;
-                  border-bottom:2px solid #2d3757; font-weight:600; font-size:11px;
+            table {{ border-collapse:collapse; width:100%; font-size:12px;
+                     margin-top:8px; }}
+            th {{ background:#1e2437; color:#8ba3c7; padding:8px 10px;
+                  text-align:left;
+                  border-bottom:2px solid #2d3757; font-weight:600;
+                  font-size:11px;
                   text-transform:uppercase; letter-spacing:.5px; }}
-            td {{ padding:6px 10px; border-bottom:1px solid #2d3757; color:#e2e8f0; }}
+            td {{ padding:6px 10px; border-bottom:1px solid #2d3757;
+                  color:#e2e8f0; }}
             tr:nth-child(even) {{ background:rgba(30,36,55,0.45); }}
             tr:hover {{ background:rgba(79,115,196,0.12); }}
             .section-title {{ font-size:18px; font-weight:700; color:#f1f5f9;
@@ -2010,21 +2413,27 @@ class ProfiliSezioniComuniDialog(QDialog):
                               border-bottom:2px solid #2d3757; }}
             .summary-card {{ background:#1e2437;
                              border:1px solid #2d3757; border-radius:8px;
-                             padding:14px 18px; margin-bottom:14px; font-size:13px;
+                             padding:14px 18px; margin-bottom:14px;
+                             font-size:13px;
                              line-height:1.7; }}
             .summary-card strong {{ color:#f1f5f9; }}
-            .badge {{ display:inline-block; padding:2px 10px; border-radius:12px;
+            .badge {{ display:inline-block; padding:2px 10px;
+                      border-radius:12px;
                       font-size:11px; font-weight:600; }}
             .badge-cut  {{ background:rgba(239,68,68,.15); color:#ef4444; }}
             .badge-fill {{ background:rgba(34,197,94,.15);  color:#22c55e; }}
             .badge-info {{ background:rgba(79,115,196,.18); color:#8fb3ff; }}
             .chart-container {{ background:#0e1118; border:1px solid #2d3757;
-                                border-radius:8px; padding:12px; margin-bottom:14px;
+                                border-radius:8px; padding:12px;
+                                margin-bottom:14px;
                                 overflow-x:auto; }}
-            .sections-grid {{ display:flex; flex-wrap:wrap; gap:10px; padding:8px 0; }}
+            .sections-grid {{ display:flex; flex-wrap:wrap; gap:10px;
+                              padding:8px 0; }}
             .section-card {{ flex:0 0 auto; text-align:center; width:140px; }}
-            .section-card svg {{ border:1px solid #2d3757; border-radius:6px; background:#0e1118; }}
-            .section-card .label {{ font-size:11px; color:#8ba3c7; margin-top:4px; line-height:1.4; }}
+            .section-card svg {{ border:1px solid #2d3757; border-radius:6px;
+                                 background:#0e1118; }}
+            .section-card .label {{ font-size:11px; color:#8ba3c7;
+                                    margin-top:4px; line-height:1.4; }}
         </style></head><body>
             {html_content}
         </body></html>"""
@@ -2036,4 +2445,5 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.btn_export_pdf.setEnabled(enabled)
         self.btn_export_csv.setEnabled(enabled)
         self.btn_export_vectors.setEnabled(enabled)
+        self.btn_export_dxf.setEnabled(enabled)
         self.btn_print_layout.setEnabled(enabled)

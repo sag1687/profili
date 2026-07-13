@@ -23,7 +23,8 @@ Supports three sources:
   "raster"             → local QgsRasterLayer (DEM/DTM)
 
 Public API:
-  calculate_profile(line_points, source, raster_layer, sample_count, band) -> (points_data, total_dist)
+  calculate_profile(line_points, source, raster_layer, sample_count, band) ->
+  (points_data, total_dist)
   build_pickets(points, total_m) -> list
   generate_profile_svg(points, total_m, source, raster_name, labels) -> str
   generate_profile_html(points, total_m, source, raster_name) -> str
@@ -39,8 +40,12 @@ import html as _html
 import csv
 
 from qgis.core import (
-    QgsDistanceArea, QgsProject, QgsRaster, QgsPointXY,
-    QgsCoordinateReferenceSystem, QgsCoordinateTransform,
+    QgsDistanceArea,
+    QgsProject,
+    QgsRaster,
+    QgsPointXY,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -51,18 +56,21 @@ _UA = "ProfiliSezioniComuni/1.0 (+info@sinocloud.it)"
 
 
 def _open_https(url, timeout):
-    """urlopen limited to https URLs — blocks file://, ftp:// and custom schemes."""
+    """urlopen limited to https URLs — blocks file://, ftp:// and custom
+    schemes."""
     if urllib.parse.urlparse(url).scheme.lower() != "https":
         raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - schema https validato sopra
+    return urllib.request.urlopen(
+        req, timeout=timeout
+    )  # nosec B310 - schema https validato sopra
 
 
 def _fetch_open_elevation(points_wgs84):
     """Open-Elevation API — max 80 pts per chunk."""
     values = []
     for start in range(0, len(points_wgs84), 80):
-        chunk = points_wgs84[start:start + 80]
+        chunk = points_wgs84[start : start + 80]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
         query = urllib.parse.urlencode({"locations": locs})
         url = f"https://api.open-elevation.com/api/v1/lookup?{query}"
@@ -71,7 +79,9 @@ def _fetch_open_elevation(points_wgs84):
                 payload = json.loads(resp.read().decode("utf-8", "replace"))
             results = payload.get("results") or []
             if len(results) != len(chunk):
-                raise RuntimeError("Incomplete response from Open-Elevation API")
+                raise RuntimeError(
+                    "Incomplete response from Open-Elevation API"
+                )
             for r in results:
                 elev = r.get("elevation")
                 values.append(float(elev) if elev is not None else None)
@@ -85,7 +95,7 @@ def _fetch_opentopo(points_wgs84):
     values = []
     chunk_size = 100
     for start in range(0, len(points_wgs84), chunk_size):
-        chunk = points_wgs84[start:start + chunk_size]
+        chunk = points_wgs84[start : start + chunk_size]
         locs = "|".join(f"{p['lat']:.7f},{p['lon']:.7f}" for p in chunk)
         query = urllib.parse.urlencode({"locations": locs})
         url = f"https://api.opentopodata.org/v1/srtm90m?{query}"
@@ -93,7 +103,9 @@ def _fetch_opentopo(points_wgs84):
             with _open_https(url, timeout=30) as resp:
                 payload = json.loads(resp.read().decode("utf-8", "replace"))
             if payload.get("status") != "OK":
-                raise RuntimeError(f"OpenTopoData status: {payload.get('status')}")
+                raise RuntimeError(
+                    f"OpenTopoData status: {payload.get('status')}"
+                )
             results = payload.get("results") or []
             if len(results) != len(chunk):
                 raise RuntimeError("Incomplete response from OpenTopoData API")
@@ -109,12 +121,12 @@ def _fetch_opentopo(points_wgs84):
 # Geometry helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _build_samples(line_points, sample_count):
     """Build evenly-spaced sample list along the polyline."""
     da = QgsDistanceArea()
     da.setSourceCrs(
-        QgsProject.instance().crs(),
-        QgsProject.instance().transformContext()
+        QgsProject.instance().crs(), QgsProject.instance().transformContext()
     )
 
     total_dist = 0.0
@@ -122,12 +134,15 @@ def _build_samples(line_points, sample_count):
     for i in range(len(line_points) - 1):
         p1, p2 = line_points[i], line_points[i + 1]
         dist = da.measureLine(p1, p2)
-        segments.append({
-            "p1": p1, "p2": p2,
-            "dist": dist,
-            "cum_start": total_dist,
-            "cum_end": total_dist + dist,
-        })
+        segments.append(
+            {
+                "p1": p1,
+                "p2": p2,
+                "dist": dist,
+                "cum_start": total_dist,
+                "cum_end": total_dist + dist,
+            }
+        )
         total_dist += dist
 
     if total_dist <= 0:
@@ -136,13 +151,13 @@ def _build_samples(line_points, sample_count):
     crs_wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
     try:
         xform = QgsCoordinateTransform(
-            QgsProject.instance().crs(), crs_wgs84,
-            QgsProject.instance().transformContext()
+            QgsProject.instance().crs(),
+            crs_wgs84,
+            QgsProject.instance().transformContext(),
         )
     except Exception:
         xform = QgsCoordinateTransform(
-            QgsProject.instance().crs(), crs_wgs84,
-            QgsProject.instance()
+            QgsProject.instance().crs(), crs_wgs84, QgsProject.instance()
         )
 
     step = total_dist / max(1, sample_count - 1)
@@ -152,17 +167,27 @@ def _build_samples(line_points, sample_count):
         if i == sample_count - 1:
             target = total_dist
         for seg in segments:
-            if seg["cum_start"] <= target <= seg["cum_end"] or math.isclose(target, seg["cum_end"]):
+            if seg["cum_start"] <= target <= seg["cum_end"] or math.isclose(
+                target, seg["cum_end"]
+            ):
                 seg_len = seg["dist"]
-                ratio = (target - seg["cum_start"]) / seg_len if seg_len > 0 else 0.0
+                ratio = (
+                    (target - seg["cum_start"]) / seg_len
+                    if seg_len > 0
+                    else 0.0
+                )
                 x = seg["p1"].x() + ratio * (seg["p2"].x() - seg["p1"].x())
                 y = seg["p1"].y() + ratio * (seg["p2"].y() - seg["p1"].y())
                 pt_wgs = xform.transform(QgsPointXY(x, y))
-                samples.append({
-                    "x": x, "y": y,
-                    "lon": pt_wgs.x(), "lat": pt_wgs.y(),
-                    "distance_m": target,
-                })
+                samples.append(
+                    {
+                        "x": x,
+                        "y": y,
+                        "lon": pt_wgs.x(),
+                        "lat": pt_wgs.y(),
+                        "distance_m": target,
+                    }
+                )
                 break
     return samples, total_dist
 
@@ -199,7 +224,10 @@ def _clean_raster_value(raw, nodata_values):
 # Public: calculate_profile
 # ──────────────────────────────────────────────────────────────────────
 
-def calculate_profile(line_points, source, raster_layer=None, sample_count=100, band=1):
+
+def calculate_profile(
+    line_points, source, raster_layer=None, sample_count=100, band=1
+):
     """
     Calculate elevation profile.
 
@@ -223,15 +251,23 @@ def calculate_profile(line_points, source, raster_layer=None, sample_count=100, 
     points_data = []
 
     if source in ("provider_openelev", "provider_opentopo"):
-        fetch_fn = _fetch_open_elevation if source == "provider_openelev" else _fetch_opentopo
+        fetch_fn = (
+            _fetch_open_elevation
+            if source == "provider_openelev"
+            else _fetch_opentopo
+        )
         elevations = fetch_fn(samples)
         for p, val in zip(samples, elevations):
-            points_data.append({
-                "x": p["x"], "y": p["y"],
-                "lon": p["lon"], "lat": p["lat"],
-                "distance_m": p["distance_m"],
-                "elevation": val,
-            })
+            points_data.append(
+                {
+                    "x": p["x"],
+                    "y": p["y"],
+                    "lon": p["lon"],
+                    "lat": p["lat"],
+                    "distance_m": p["distance_m"],
+                    "elevation": val,
+                }
+            )
     elif source == "raster":
         if not raster_layer:
             raise ValueError("No raster layer selected.")
@@ -240,7 +276,11 @@ def calculate_profile(line_points, source, raster_layer=None, sample_count=100, 
         project_crs = project.crs()
         raster_crs = raster_layer.crs()
         xform_to_raster = None
-        if project_crs.isValid() and raster_crs.isValid() and project_crs != raster_crs:
+        if (
+            project_crs.isValid()
+            and raster_crs.isValid()
+            and project_crs != raster_crs
+        ):
             try:
                 xform_to_raster = QgsCoordinateTransform(
                     project_crs,
@@ -248,12 +288,18 @@ def calculate_profile(line_points, source, raster_layer=None, sample_count=100, 
                     project.transformContext(),
                 )
             except Exception:
-                xform_to_raster = QgsCoordinateTransform(project_crs, raster_crs, project)
+                xform_to_raster = QgsCoordinateTransform(
+                    project_crs, raster_crs, project
+                )
         raster_extent = raster_layer.extent()
         nodata_values = _raster_nodata_values(dp, band)
         for p in samples:
             pt_project = QgsPointXY(p["x"], p["y"])
-            pt_raster = xform_to_raster.transform(pt_project) if xform_to_raster else pt_project
+            pt_raster = (
+                xform_to_raster.transform(pt_project)
+                if xform_to_raster
+                else pt_project
+            )
             result = None
             if raster_extent.contains(pt_raster):
                 result = dp.identify(pt_raster, QgsRaster.IdentifyFormatValue)
@@ -261,17 +307,24 @@ def calculate_profile(line_points, source, raster_layer=None, sample_count=100, 
             if result and result.isValid():
                 raw = result.results().get(band)
                 val = _clean_raster_value(raw, nodata_values)
-            points_data.append({
-                "x": p["x"], "y": p["y"],
-                "lon": p["lon"], "lat": p["lat"],
-                "raster_x": pt_raster.x(), "raster_y": pt_raster.y(),
-                "distance_m": p["distance_m"],
-                "elevation": val,
-            })
+            points_data.append(
+                {
+                    "x": p["x"],
+                    "y": p["y"],
+                    "lon": p["lon"],
+                    "lat": p["lat"],
+                    "raster_x": pt_raster.x(),
+                    "raster_y": pt_raster.y(),
+                    "distance_m": p["distance_m"],
+                    "elevation": val,
+                }
+            )
         if not any(p.get("elevation") is not None for p in points_data):
             raise RuntimeError(
-                "Il raster selezionato non ha restituito quote valide lungo il tracciato. "
-                "Controlla che il tracciato cada dentro l'estensione del DEM, che il DEM abbia "
+                "Il raster selezionato non ha restituito quote valide lungo "
+                "il tracciato. "
+                "Controlla che il tracciato cada dentro l'estensione del DEM, "
+                "che il DEM abbia "
                 "un CRS valido e che la banda selezionata contenga quote. "
                 "Project CRS: {0}; Raster CRS: {1}; Raster extent: {2}".format(
                     project_crs.authid() or project_crs.description(),
@@ -289,6 +342,7 @@ def calculate_profile(line_points, source, raster_layer=None, sample_count=100, 
 # Pickets helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _nice_step(max_value, target=10):
     max_value = float(max_value or 0)
     if max_value <= 0:
@@ -297,7 +351,7 @@ def _nice_step(max_value, target=10):
     if raw <= 0:
         return 1.0
     mag = math.floor(math.log10(raw))
-    mag_pow = 10 ** mag
+    mag_pow = 10**mag
     norm = raw / mag_pow
     if norm < 1.5:
         nice = 1.0
@@ -326,7 +380,10 @@ def _elevation_at(points, distance_m):
             if db <= da:
                 return a["elevation"]
             f = (d - da) / (db - da)
-            return float(a["elevation"]) + (float(b["elevation"]) - float(a["elevation"])) * f
+            return (
+                float(a["elevation"])
+                + (float(b["elevation"]) - float(a["elevation"])) * f
+            )
     return valid[-1]["elevation"]
 
 
@@ -344,8 +401,10 @@ def _point_at_distance(points, distance_m):
                 return a
             f = (d - da) / (db - da)
             return {
-                "lon": float(a["lon"]) + (float(b["lon"]) - float(a["lon"])) * f,
-                "lat": float(a["lat"]) + (float(b["lat"]) - float(a["lat"])) * f,
+                "lon": float(a["lon"])
+                + (float(b["lon"]) - float(a["lon"])) * f,
+                "lat": float(a["lat"])
+                + (float(b["lat"]) - float(a["lat"])) * f,
                 "distance_m": d,
                 "elevation": _elevation_at(points, d),
             }
@@ -370,14 +429,18 @@ def build_pickets(points, total_m):
         p = _point_at_distance(points, dist)
         if not p:
             continue
-        pickets.append({
-            "id": f"P{idx:02d}",
-            "progressive_m": float(dist),
-            "partial_m": float(dist - distances[idx - 1]) if idx > 0 else 0.0,
-            "lon": float(p.get("lon", 0)),
-            "lat": float(p.get("lat", 0)),
-            "elevation": p.get("elevation"),
-        })
+        pickets.append(
+            {
+                "id": f"P{idx:02d}",
+                "progressive_m": float(dist),
+                "partial_m": (
+                    float(dist - distances[idx - 1]) if idx > 0 else 0.0
+                ),
+                "lon": float(p.get("lon", 0)),
+                "lat": float(p.get("lat", 0)),
+                "elevation": p.get("elevation"),
+            }
+        )
     return pickets
 
 
@@ -385,7 +448,10 @@ def build_pickets(points, total_m):
 # SVG generator
 # ──────────────────────────────────────────────────────────────────────
 
-def generate_profile_svg(points, total_m, source="raster", raster_name="", labels=None):
+
+def generate_profile_svg(
+    points, total_m, source="raster", raster_name="", labels=None
+):
     if not points:
         return "<svg><text x='10' y='20'>No data.</text></svg>"
 
@@ -417,7 +483,9 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
     def y_of(z):
         return chart_b - ((float(z) - y_min) / z_span) * (chart_b - chart_t)
 
-    path_pts = [(x_of(p.get("distance_m")), y_of(p.get("elevation"))) for p in valid]
+    path_pts = [
+        (x_of(p.get("distance_m")), y_of(p.get("elevation"))) for p in valid
+    ]
     line_d = " ".join(
         f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}"
         for i, (x, y) in enumerate(path_pts)
@@ -435,7 +503,8 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
         z = y_min + z_span * t
         y = y_of(z)
         y_ticks.append(
-            f'<line x1="{chart_l}" y1="{y:.1f}" x2="{chart_r}" y2="{y:.1f}" class="grid"/>'
+            f'<line x1="{chart_l}" y1="{y:.1f}" x2="{chart_r}" y2="{y:.1f}" '
+            f'class="grid"/>'
             f'<text x="28" y="{y + 4:.1f}" class="axis">{z:.1f} m</text>'
         )
 
@@ -446,8 +515,10 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
         x = x_of(d)
         label = f"{d / 1000:.2f} km" if total_m >= 1000 else f"{d:.0f} m"
         x_ticks.append(
-            f'<line x1="{x:.1f}" y1="{chart_t}" x2="{x:.1f}" y2="{chart_b}" class="grid"/>'
-            f'<text x="{x:.1f}" y="{chart_b + 28}" class="axis center">{esc(label)}</text>'
+            f'<line x1="{x:.1f}" y1="{chart_t}" x2="{x:.1f}" y2="{chart_b}" '
+            f'class="grid"/>'
+            f'<text x="{x:.1f}" y="{chart_b + 28}" class="axis '
+            f'center">{esc(label)}</text>'
         )
         d += x_step
 
@@ -457,9 +528,11 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
         z = p.get("elevation")
         y = y_of(z) if z is not None else chart_b
         picket_lines.append(
-            f'<line x1="{x:.1f}" y1="{chart_b}" x2="{x:.1f}" y2="{y:.1f}" class="picket-line"/>'
+            f'<line x1="{x:.1f}" y1="{chart_b}" x2="{x:.1f}" y2="{y:.1f}" '
+            f'class="picket-line"/>'
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4.5" class="picket-dot"/>'
-            f'<text x="{x:.1f}" y="{chart_b + 48}" class="picket-label">{esc(p.get("id"))}</text>'
+            f'<text x="{x:.1f}" y="{chart_b + 48}" '
+            f'class="picket-label">{esc(p.get("id"))}</text>'
         )
 
     table_rows = []
@@ -469,12 +542,16 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
         y = table_t + 50 + i * row_h
         bg = "#1e2437" if i % 2 == 0 else "#12151e"
         elev = p.get("elevation")
+        elev_text = "" if elev is None else f"{float(elev):.2f}"
         table_rows.append(
-            f'<rect x="70" y="{y - 18}" width="1460" height="{row_h}" fill="{bg}"/>'
+            f'<rect x="70" y="{y - 18}" width="1460" height="{row_h}" '
+            f'fill="{bg}"/>'
             f'<text x="92" y="{y}" class="cell bold">{esc(p.get("id"))}</text>'
-            f'<text x="230" y="{y}" class="cell">{p.get("progressive_m", 0):.2f}</text>'
-            f'<text x="610" y="{y}" class="cell">{p.get("partial_m", 0):.2f}</text>'
-            f'<text x="790" y="{y}" class="cell">{"" if elev is None else f"{float(elev):.2f}"}</text>'
+            f'<text x="230" y="{y}" '
+            f'class="cell">{p.get("progressive_m", 0):.2f}</text>'
+            f'<text x="610" y="{y}" '
+            f'class="cell">{p.get("partial_m", 0):.2f}</text>'
+            f'<text x="790" y="{y}" class="cell">{elev_text}</text>'
             f'<text x="1010" y="{y}" class="cell">{p.get("lon", 0):.7f}</text>'
             f'<text x="1260" y="{y}" class="cell">{p.get("lat", 0):.7f}</text>'
         )
@@ -482,11 +559,18 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
         y = table_t + 50 + len(usable) * row_h
         table_rows.append(
             f'<text x="92" y="{y}" class="cell muted">'
-            f'Other {len(pickets) - len(usable)} pickets exportable via CSV.</text>'
+            f"Other {len(pickets) - len(usable)} pickets exportable via "
+            f"CSV.</text>"
         )
 
-    dist_label = f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
-    project_title = QgsProject.instance().title() or QgsProject.instance().baseName() or "Project"
+    dist_label = (
+        f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
+    )
+    project_title = (
+        QgsProject.instance().title()
+        or QgsProject.instance().baseName()
+        or "Project"
+    )
     created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     source_labels = {
@@ -496,7 +580,7 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
     }
     provider_name = source_labels.get(source, raster_name or "DEM/DTM")
 
-    return f'''<?xml version="1.0" encoding="UTF-8"?>
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <defs>
   <linearGradient id="profileFill" x1="0" x2="0" y1="0" y2="1">
@@ -531,7 +615,8 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
 {f'<path d="{fill_d}" class="profile-fill"/>' if fill_d else ''}
 {f'<path d="{line_d}" class="profile"/>' if line_d else ''}
 {''.join(picket_lines)}
-<text x="70" y="625" class="title" style="font-size:20px">Pickets / Fincatura Picchetti</text>
+<text x="70" y="625" class="title" style="font-size:20px">Pickets /
+Fincatura Picchetti</text>
 <rect x="70" y="{table_t}" width="1460" height="34" fill="#1e2437"/>
 <text x="92" y="{table_t + 22}" class="thead">{esc(lbl_peg)}</text>
 <text x="230" y="{table_t + 22}" class="thead">{esc(lbl_progressive)}</text>
@@ -542,22 +627,26 @@ def generate_profile_svg(points, total_m, source="raster", raster_name="", label
 {''.join(table_rows)}
 <text x="70" y="992" class="footer">Source: {esc(provider_name)}</text>
 </svg>
-'''
+"""
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Interactive HTML with Chart.js
 # ──────────────────────────────────────────────────────────────────────
 
+
 def generate_profile_html(points, total_m, source="raster", raster_name=""):
-    """Return a standalone HTML page with an interactive Chart.js elevation chart."""
+    """Return a standalone HTML page with an interactive Chart.js elevation
+    chart."""
     valid = [p for p in points if p.get("elevation") is not None]
     pickets = build_pickets(points, total_m)
 
     distances = [round(p["distance_m"], 2) for p in valid]
     elevations = [round(p["elevation"], 2) for p in valid]
 
-    dist_label = f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
+    dist_label = (
+        f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
+    )
     min_z = min(elevations, default=0)
     max_z = max(elevations, default=0)
 
@@ -567,7 +656,11 @@ def generate_profile_html(points, total_m, source="raster", raster_name=""):
         "raster": raster_name or "DEM/DTM",
     }
     src_label = source_labels.get(source, raster_name or "DEM/DTM")
-    project_title = QgsProject.instance().title() or QgsProject.instance().baseName() or "Project"
+    project_title = (
+        QgsProject.instance().title()
+        or QgsProject.instance().baseName()
+        or "Project"
+    )
     created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     dist_json = json.dumps(distances)
@@ -591,17 +684,21 @@ def generate_profile_html(points, total_m, source="raster", raster_name=""):
 <head>
 <meta charset="UTF-8"/>
 <title>Elevation Profile</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script
+src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
+</script>
 <style>
   body {{ margin:0; padding:16px; background:#12151e; color:#e2e8f0;
          font-family:'Segoe UI',Arial,sans-serif; font-size:13px; }}
   h2 {{ color:#f1f5f9; margin:0 0 4px; }}
   .meta {{ color:#8ba3c7; font-size:12px; margin-bottom:16px; }}
-  .chart-wrap {{ background:#0e1118; border:1px solid #2d3757; border-radius:8px;
+  .chart-wrap {{ background:#0e1118; border:1px solid #2d3757;
+                 border-radius:8px;
                  padding:16px; margin-bottom:16px; }}
   table {{ border-collapse:collapse; width:100%; font-size:12px; }}
   th {{ background:#1e2437; color:#8ba3c7; padding:7px 10px; text-align:left;
-        border-bottom:2px solid #2d3757; font-size:11px; text-transform:uppercase; }}
+        border-bottom:2px solid #2d3757; font-size:11px;
+        text-transform:uppercase; }}
   td {{ padding:5px 10px; border-bottom:1px solid #2d3757; color:#e2e8f0; }}
   tr:nth-child(even) td {{ background:rgba(30,36,55,0.5); }}
   tr:hover td {{ background:rgba(79,115,196,0.12); }}
@@ -644,10 +741,12 @@ new Chart(document.getElementById('profileChart'), {{
     scales: {{
       x: {{ ticks: {{ color:'#8ba3c7', maxTicksLimit:12 }},
              grid: {{ color:'#2d3757' }},
-             title: {{ display:true, text:'Distance (m)', color:'#8ba3c7' }} }},
+             title: {{ display:true, text:'Distance (m)',
+                      color:'#8ba3c7' }} }},
       y: {{ ticks: {{ color:'#8ba3c7' }},
              grid: {{ color:'#2d3757' }},
-             title: {{ display:true, text:'Elevation (m)', color:'#8ba3c7' }} }},
+             title: {{ display:true, text:'Elevation (m)',
+                      color:'#8ba3c7' }} }},
     }}
   }}
 }});
@@ -671,27 +770,43 @@ new Chart(document.getElementById('profileChart'), {{
 # CSV export
 # ──────────────────────────────────────────────────────────────────────
 
+
 def export_profile_csv(points, filepath):
     """Write profile points to a semicolon-delimited CSV file."""
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter=";")
         writer.writerow(["Distance_m", "Elevation_m", "Lon", "Lat"])
         for p in points:
-            writer.writerow([
-                f"{p['distance_m']:.2f}",
-                f"{p['elevation']:.2f}" if p.get("elevation") is not None else "",
-                f"{p.get('lon', p.get('x', 0)):.7f}",
-                f"{p.get('lat', p.get('y', 0)):.7f}",
-            ])
+            writer.writerow(
+                [
+                    f"{p['distance_m']:.2f}",
+                    (
+                        f"{p['elevation']:.2f}"
+                        if p.get("elevation") is not None
+                        else ""
+                    ),
+                    f"{p.get('lon', p.get('x', 0)):.7f}",
+                    f"{p.get('lat', p.get('y', 0)):.7f}",
+                ]
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Full results HTML (for in-dialog display)
 # ──────────────────────────────────────────────────────────────────────
 
+
 def generate_profile_results_html(
-        points, total_m, source, raster_name, svg_content, labels=None, chart_html=None):
-    """Build complete HTML with embedded chart + pickets table for the Results tab."""
+    points,
+    total_m,
+    source,
+    raster_name,
+    svg_content,
+    labels=None,
+    chart_html=None,
+):
+    """Build complete HTML with embedded chart + pickets table for the Results
+    tab."""
     valid = [p for p in points if p.get("elevation") is not None]
     pickets = build_pickets(points, total_m)
     labels = labels or {}
@@ -701,8 +816,14 @@ def generate_profile_results_html(
 
     min_z = min((p["elevation"] for p in valid), default=0)
     max_z = max((p["elevation"] for p in valid), default=0)
-    dist_label = f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
-    project_title = QgsProject.instance().title() or QgsProject.instance().baseName() or "Project"
+    dist_label = (
+        f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
+    )
+    project_title = (
+        QgsProject.instance().title()
+        or QgsProject.instance().baseName()
+        or "Project"
+    )
 
     source_labels = {
         "provider_openelev": "Open-Elevation API (SRTM/NASA)",
@@ -733,7 +854,8 @@ def generate_profile_results_html(
     <table>
         <thead>
             <tr>
-                <th>{lbl_peg}</th><th>{lbl_progressive} (m)</th><th>Partial (m)</th>
+                <th>{lbl_peg}</th><th>{lbl_progressive} (m)</th>
+                <th>Partial (m)</th>
                 <th>{lbl_ground} (m)</th><th>Longitude</th><th>Latitude</th>
             </tr>
         </thead>
@@ -742,8 +864,9 @@ def generate_profile_results_html(
     for p in pickets:
         elev = p.get("elevation")
         elev_str = f"{float(elev):.2f}" if elev is not None else "—"
+        picket_id = _html.escape(str(p.get("id", "")))
         html += (
-            f"<tr><td style='font-weight:700;'>{_html.escape(str(p.get('id', '')))}</td>"
+            f"<tr><td style='font-weight:700;'>{picket_id}</td>"
             f"<td>{p.get('progressive_m', 0):.2f}</td>"
             f"<td>{p.get('partial_m', 0):.2f}</td>"
             f"<td>{elev_str}</td>"
@@ -765,7 +888,8 @@ def generate_profile_results_html(
         elev = p.get("elevation")
         elev_str = f"{float(elev):.2f}" if elev is not None else "—"
         html += (
-            f"<tr><td>{i + 1}</td><td>{p['distance_m']:.2f}</td><td>{elev_str}</td>"
+            f"<tr><td>{i + 1}</td><td>{p['distance_m']:.2f}</td>"
+            f"<td>{elev_str}</td>"
             f"<td>{p.get('lon', p.get('x', 0)):.7f}</td>"
             f"<td>{p.get('lat', p.get('y', 0)):.7f}</td></tr>\n"
         )

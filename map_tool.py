@@ -20,6 +20,7 @@ from qgis.PyQt.QtCore import pyqtSignal, Qt
 from qgis.PyQt.QtGui import QColor
 
 from .qt_compat import ensure_qt_compat, QtCompat
+
 ensure_qt_compat(Qt)
 
 
@@ -32,7 +33,7 @@ class DrawPolylineTool(QgsMapTool):
     - Right-click: cancel current drawing.
     """
 
-    lineDrawn = pyqtSignal(list)   # emits list[QgsPointXY]
+    lineDrawn = pyqtSignal(list)  # emits list[QgsPointXY]
 
     def __init__(self, canvas):
         super().__init__(canvas)
@@ -97,7 +98,7 @@ class DrawRectangleAreaTool(QgsMapTool):
     - Right-click: cancel current drawing.
     """
 
-    areaDrawn = pyqtSignal(list)   # emits closed list[QgsPointXY]
+    areaDrawn = pyqtSignal(list)  # emits closed list[QgsPointXY]
 
     def __init__(self, canvas):
         super().__init__(canvas)

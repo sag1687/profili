@@ -4,7 +4,7 @@ description=Profili altimetrici, sezioni con volumi di sterro/riporto, download 
 about=Strumento avanzato in grafica SPATIQON per profili altimetrici, sezioni trasversali reali con sterri/riporti/accumuli, disegni tecnici vettoriali, download raster da area SHIFT-draw da ZIP ufficiali TINITALY 1.1 e HR-DTM-5m Zenodo con progress/ETA e citazione/licenza, ricerca confini comunali via OpenStreetMap/Nominatim e riferimento download ufficiale ISTAT, e confronto prima/dopo lavori tra GeoPackage generati dal plugin e tra DTM (raster differenza con volumi scavo/riporto, senza AI). Advanced SPATIQON-style tool for elevation profiles, real cross sections with cut/fill/stockpile volumes, vector section drawings, SHIFT-draw raster download, Italian municipality lookup, before/after works comparison (plugin GeoPackages and DTM difference with cut/fill volumes, AI-free), and PNG/PDF/CSV/GPKG/QGIS layout exports.
 qgisMinimumVersion=3.16
 qgisMaximumVersion=4.99
-version=1.3.4
+version=1.3.6
 author=Dott. Sarino Alfonso Grande
 email=info@sinocloud.it
 tracker=https://github.com/sag1687/profili/issues
@@ -15,7 +15,13 @@ icon=icon.svg
 tags=elevation,profile,cross-section,municipality,comuni,dem,dtm,terrain,tinitaly,zenodo,istat,cut-fill,comparison,confronto,dod,change-detection
 experimental=False
 license=GPL-2.0
-changelog=1.3.4
+changelog=1.3.6
+    - IT: Nuovo diagramma quotato in stile tecnico (linea di terreno/progetto, griglia con tacche quota/progressiva, esagerazione verticale automatica ed etichetta di scala) aggiunto come layer QGIS veri per il profilo e per ogni sezione trasversale; nuovo pulsante Esporta DXF
+    - EN: New engineering-style elevation diagram (ground/design line, grid with elevation/chainage ticks, automatic vertical exaggeration and scale label) added as real QGIS layers for the profile and each cross-section; new Export DXF button
+    1.3.5
+    - IT: Corretto E501 (righe troppo lunghe, PEP8) in core_sections.py, core_confronto.py, core_elevation.py, core_raster_download.py, dialog.py e plugin.py
+    - EN: Fixed E501 (line too long, PEP8) in core_sections.py, core_confronto.py, core_elevation.py, core_raster_download.py, dialog.py and plugin.py
+    1.3.4
     - IT: Scheda Info: elenco corretto degli altri plugin pubblicati dall'autore su plugins.qgis.org (QGIS Ledger, Q-Press, Quick CRS Fixer, STAC Browser, GeoBridgeIT, TAF Italia)
     - EN: Info tab: correct list of the author's other published plugins on plugins.qgis.org (QGIS Ledger, Q-Press, Quick CRS Fixer, STAC Browser, GeoBridgeIT, TAF Italia)
     - IT: Verifica end-to-end su QGIS 4.2 headless: export GeoPackage, dialog, layout di stampa multi-foglio con legenda/reticolo/scala e confronto DTM

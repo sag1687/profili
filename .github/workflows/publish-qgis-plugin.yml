@@ -1,0 +1,188 @@
+name: Publish QGIS Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      auto_approve_after_scan:
+        description: Publish immediately after the security scan if the uploader is trusted
+        required: false
+        default: false
+        type: boolean
+      skip_security_rules:
+        description: Comma-separated skippable security rule codes
+        required: false
+        default: ""
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_NAME: "profili_sezioni_comuni"
+      ZIP_ROOT: "profili_sezioni_comuni"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read plugin metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import configparser
+
+          metadata = Path("metadata.txt")
+          if not metadata.exists():
+              raise SystemExit("metadata.txt not found in repository root")
+
+          parser = configparser.ConfigParser(interpolation=None)
+          parser.read(metadata, encoding="utf-8")
+
+          version = parser.get("general", "version").strip()
+          if not version:
+              raise SystemExit("Version not found in metadata.txt")
+
+          Path(".qgis_plugin_version").write_text(version, encoding="utf-8")
+          PY
+
+          version="$(cat .qgis_plugin_version)"
+          echo "plugin_version=$version" >>"$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            expected_tag="v$version"
+            if [ "${GITHUB_REF_NAME:-}" != "$expected_tag" ]; then
+              echo "Tag ${GITHUB_REF_NAME:-} does not match metadata version $version." >&2
+              echo "Expected tag: $expected_tag" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build plugin zip
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_dir="$RUNNER_TEMP/qgis-plugin-build"
+          artifact_path="$RUNNER_TEMP/${PACKAGE_NAME}.zip"
+
+          rm -rf "$build_dir" "$artifact_path"
+          mkdir -p "$build_dir/$ZIP_ROOT"
+
+          rsync -a \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.pytest_cache/' \
+            --exclude '.mypy_cache/' \
+            --exclude '.ruff_cache/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc' \
+            --exclude '*.pyo' \
+            --exclude '*.zip' \
+            ./ "$build_dir/$ZIP_ROOT/"
+
+          (
+            cd "$build_dir"
+            zip -rq "$artifact_path" "$ZIP_ROOT"
+          )
+
+          echo "package_path=$artifact_path" >>"$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-zip
+          path: ${{ steps.build.outputs.package_path }}
+
+      - name: Publish to QGIS Store
+        id: publish
+        env:
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+          AUTO_APPROVE_AFTER_SCAN: ${{ github.event.inputs.auto_approve_after_scan || 'false' }}
+          SKIP_SECURITY_RULES: ${{ github.event.inputs.skip_security_rules || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${QGIS_PLUGIN_TOKEN:-}" ]; then
+            echo "Missing repository secret QGIS_PLUGIN_TOKEN." >&2
+            exit 1
+          fi
+
+          version="${{ steps.metadata.outputs.plugin_version }}"
+          lookup_url="https://plugins.qgis.org/plugins/api/$PACKAGE_NAME/version/$version/json"
+          create_url="https://plugins.qgis.org/plugins/api/$PACKAGE_NAME/version/add/"
+          update_url="https://plugins.qgis.org/plugins/api/$PACKAGE_NAME/version/$version/update/"
+
+          lookup_status="$(curl -sS -o "$RUNNER_TEMP/qgis-version-check.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $QGIS_PLUGIN_TOKEN" \
+            "$lookup_url")"
+
+          endpoint="$create_url"
+          action="add"
+          if [ "$lookup_status" = "200" ]; then
+            endpoint="$update_url"
+            action="update"
+          elif [ "$lookup_status" != "404" ]; then
+            echo "Unexpected lookup status $lookup_status while checking version $version." >&2
+            cat "$RUNNER_TEMP/qgis-version-check.json" >&2 || true
+            exit 1
+          fi
+
+          curl_args=(
+            -sS
+            -o "$RUNNER_TEMP/qgis-publish-response.json"
+            -w '%{http_code}'
+            -X POST
+            "$endpoint"
+            -H "Authorization: Bearer $QGIS_PLUGIN_TOKEN"
+            -F "package=@${{ steps.build.outputs.package_path }}"
+          )
+
+          if [ "$AUTO_APPROVE_AFTER_SCAN" = "true" ]; then
+            curl_args+=(-F "auto_approve_after_scan=true")
+          fi
+
+          if [ -n "${SKIP_SECURITY_RULES// }" ]; then
+            IFS=',' read -r -a rules <<<"$SKIP_SECURITY_RULES"
+            for rule in "${rules[@]}"; do
+              trimmed="$(printf '%s' "$rule" | xargs)"
+              if [ -n "$trimmed" ]; then
+                curl_args+=(-F "skip_security_rules=$trimmed")
+              fi
+            done
+          fi
+
+          publish_status="$(curl "${curl_args[@]}")"
+
+          echo "publish_action=$action" >>"$GITHUB_OUTPUT"
+          echo "publish_status=$publish_status" >>"$GITHUB_OUTPUT"
+
+          cat "$RUNNER_TEMP/qgis-publish-response.json"
+
+          case "$publish_status" in
+            200|201) ;;
+            *)
+              echo "QGIS publish request failed with HTTP $publish_status." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Write step summary
+        shell: bash
+        run: |
+          {
+            echo "## QGIS Publish"
+            echo ""
+            echo "- Package: \`$PACKAGE_NAME\`"
+            echo "- Version: \`${{ steps.metadata.outputs.plugin_version }}\`"
+            echo "- Action: \`${{ steps.publish.outputs.publish_action }}\`"
+            echo "- HTTP status: \`${{ steps.publish.outputs.publish_status }}\`"
+          } >>"$GITHUB_STEP_SUMMARY"

@@ -28,7 +28,10 @@ import urllib.parse
 import urllib.request
 
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
+    QgsProject,
+    QgsVectorLayer,
+    QgsFeature,
+    QgsGeometry,
 )
 
 _UA = "ProfiliSezioniComuni/1.0 QGIS-plugin (+info@sinocloud.it)"
@@ -39,23 +42,30 @@ _NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
 # Nominatim helpers
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _nominatim_get(endpoint, params):
     """Perform a Nominatim GET request and return parsed JSON."""
     query = urllib.parse.urlencode(params)
     url = f"{_NOMINATIM_BASE}/{endpoint}?{query}"
     if urllib.parse.urlparse(url).scheme.lower() != "https":
         raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": _UA,
-        "Accept-Language": "it,en",
-    })
-    with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310 - schema https validato sopra
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _UA,
+            "Accept-Language": "it,en",
+        },
+    )
+    with urllib.request.urlopen(
+        req, timeout=20
+    ) as resp:  # nosec B310 - schema https validato sopra
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 
 # ──────────────────────────────────────────────────────────────────────
 # search_comuni
 # ──────────────────────────────────────────────────────────────────────
+
 
 def search_comuni(query, limit=10):
     """
@@ -95,26 +105,37 @@ def search_comuni(query, limit=10):
         osm_type = r.get("osm_type", "")
         place_type = r.get("type", "")
         if place_type not in (
-            "city", "town", "village", "hamlet", "municipality",
-            "administrative", "suburb", "quarter",
+            "city",
+            "town",
+            "village",
+            "hamlet",
+            "municipality",
+            "administrative",
+            "suburb",
+            "quarter",
         ):
             continue
         addr = r.get("address", {})
-        comuni.append({
-            "name": r.get("name", r.get("display_name", "").split(",")[0].strip()),
-            "display_name": r.get("display_name", ""),
-            "osm_id": str(r.get("osm_id", "")),
-            "osm_type": osm_type,
-            "lat": float(r.get("lat", 0)),
-            "lon": float(r.get("lon", 0)),
-            "address": addr,
-        })
+        comuni.append(
+            {
+                "name": r.get(
+                    "name", r.get("display_name", "").split(",")[0].strip()
+                ),
+                "display_name": r.get("display_name", ""),
+                "osm_id": str(r.get("osm_id", "")),
+                "osm_type": osm_type,
+                "lat": float(r.get("lat", 0)),
+                "lon": float(r.get("lon", 0)),
+                "address": addr,
+            }
+        )
     return comuni
 
 
 # ──────────────────────────────────────────────────────────────────────
 # fetch_comune_boundary
 # ──────────────────────────────────────────────────────────────────────
+
 
 def fetch_comune_boundary(osm_type, osm_id):
     """
@@ -165,6 +186,7 @@ def fetch_comune_boundary(osm_type, osm_id):
 # ──────────────────────────────────────────────────────────────────────
 # create_boundary_layer
 # ──────────────────────────────────────────────────────────────────────
+
 
 def create_boundary_layer(geojson_feature, layer_name):
     """
@@ -248,7 +270,8 @@ def _geojson_geom_to_wkt(geom_data):
 
 
 def _rings_to_wkt(rings):
-    """Convert a list of rings (each a list of [lon, lat]) to WKT ring string."""
+    """Convert a list of rings (each a list of [lon, lat]) to WKT ring
+    string."""
     ring_strs = []
     for ring in rings:
         pts = ",".join(f"{pt[0]:.7f} {pt[1]:.7f}" for pt in ring)
@@ -266,12 +289,15 @@ def _apply_boundary_style(vl):
     """Apply a green-border, transparent-fill style to the boundary layer."""
     try:
         from qgis.core import QgsSingleSymbolRenderer, QgsFillSymbol
-        symbol = QgsFillSymbol.createSimple({
-            "color": "0,0,0,0",          # transparent fill
-            "outline_color": "#22c55e",
-            "outline_width": "1.2",
-            "outline_style": "solid",
-        })
+
+        symbol = QgsFillSymbol.createSimple(
+            {
+                "color": "0,0,0,0",  # transparent fill
+                "outline_color": "#22c55e",
+                "outline_width": "1.2",
+                "outline_style": "solid",
+            }
+        )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
     except Exception:
         pass
