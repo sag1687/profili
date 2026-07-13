@@ -190,7 +190,7 @@ def calculate_cross_sections(
 
     def _sample_elevation(lon, lat):
         pt = xform_from_wgs.transform(QgsPointXY(lon, lat))
-        res = dp.identify(pt, QgsRaster.IdentifyFormatValue)
+        res = dp.identify(pt, QgsRaster.IdentifyFormat.IdentifyFormatValue)
         if res.isValid():
             raw = res.results().get(band)
             try:

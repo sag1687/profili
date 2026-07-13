@@ -291,11 +291,13 @@ class ProfiliSezioniComuniPlugin:
                 options.layerName = layer_name
                 if idx == 0:
                     options.actionOnExistingFile = (
-                        QgsVectorFileWriter.CreateOrOverwriteFile
+                        QgsVectorFileWriter
+                        .ActionOnExistingFile.CreateOrOverwriteFile
                     )
                 else:
                     options.actionOnExistingFile = (
-                        QgsVectorFileWriter.CreateOrOverwriteLayer
+                        QgsVectorFileWriter
+                        .ActionOnExistingFile.CreateOrOverwriteLayer
                     )
                 writer = getattr(
                     QgsVectorFileWriter, "writeAsVectorFormatV3", None
@@ -311,7 +313,7 @@ class ProfiliSezioniComuniPlugin:
                     options,
                 )
                 err_code = result[0] if isinstance(result, tuple) else result
-                if err_code != QgsVectorFileWriter.NoError:
+                if err_code != QgsVectorFileWriter.WriterError.NoError:
                     msg = (
                         result[1]
                         if isinstance(result, tuple) and len(result) > 1
@@ -329,7 +331,7 @@ class ProfiliSezioniComuniPlugin:
                 )
                 if isinstance(err, tuple):
                     err = err[0]
-                if err != QgsVectorFileWriter.NoError:
+                if err != QgsVectorFileWriter.WriterError.NoError:
                     raise RuntimeError(
                         f"Vector export failed for {layer.name()}: {err}"
                     )
@@ -1011,7 +1013,9 @@ class ProfiliSezioniComuniPlugin:
             threshold = result.get("threshold_m") or 0.05
             shader_fn = QgsColorRampShader()
             try:
-                shader_fn.setColorRampType(QgsColorRampShader.Interpolated)
+                shader_fn.setColorRampType(
+                    QgsColorRampShader.Type.Interpolated
+                )
             except AttributeError:
                 shader_fn.setColorRampType(
                     QgsColorRampShader.Type.Interpolated
@@ -2357,7 +2361,7 @@ class ProfiliSezioniComuniPlugin:
             settings.exportMetadata = True
 
         result = exporter.exportToPdf(output_path, settings)
-        if result != QgsLayoutExporter.Success:
+        if result != QgsLayoutExporter.ExportResult.Success:
             raise Exception(f"Errore durante l'esportazione PDF: {result}")
         if (
             not os.path.exists(output_path)
@@ -2487,7 +2491,7 @@ class ProfiliSezioniComuniPlugin:
         )
 
         project = QgsProject.instance()
-        mm = QgsUnitTypes.LayoutMillimeters
+        mm = QgsUnitTypes.LayoutUnit.LayoutMillimeters
         layout = QgsPrintLayout(project)
         layout.initializeDefaults()
         layout.setName(layout_name)
@@ -2526,11 +2530,11 @@ class ProfiliSezioniComuniPlugin:
             grid.setIntervalX(interval)
             grid.setIntervalY(interval)
             try:
-                grid.setStyle(QgsLayoutItemMapGrid.Solid)
+                grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
             except AttributeError:
                 grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
             try:
-                grid.setFrameStyle(QgsLayoutItemMapGrid.Zebra)
+                grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
             except AttributeError:
                 grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
             grid.setFrameWidth(2.0)
@@ -2596,7 +2600,7 @@ class ProfiliSezioniComuniPlugin:
         charts = self._collect_print_charts()
         try:
             try:
-                shape_type = QgsLayoutItemShape.Rectangle
+                shape_type = QgsLayoutItemShape.Shape.Rectangle
             except AttributeError:
                 shape_type = QgsLayoutItemShape.Shape.Rectangle
             cartiglio = QgsLayoutItemShape(layout)
@@ -2673,7 +2677,7 @@ class ProfiliSezioniComuniPlugin:
                 thumb = QgsLayoutItemPicture(layout)
                 thumb.setPicturePath(svg_path)
                 try:
-                    thumb.setResizeMode(QgsLayoutItemPicture.Zoom)
+                    thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 except AttributeError:
                     thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(thumb)
@@ -2707,7 +2711,7 @@ class ProfiliSezioniComuniPlugin:
                 pic = QgsLayoutItemPicture(layout)
                 pic.setPicturePath(svg_path)
                 try:
-                    pic.setResizeMode(QgsLayoutItemPicture.Zoom)
+                    pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 except AttributeError:
                     pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(pic)

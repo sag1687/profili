@@ -302,7 +302,9 @@ def calculate_profile(
             )
             result = None
             if raster_extent.contains(pt_raster):
-                result = dp.identify(pt_raster, QgsRaster.IdentifyFormatValue)
+                result = dp.identify(
+                    pt_raster, QgsRaster.IdentifyFormat.IdentifyFormatValue
+                )
             val = None
             if result and result.isValid():
                 raw = result.results().get(band)

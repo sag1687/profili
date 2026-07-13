@@ -961,8 +961,8 @@ class ProfiliSezioniComuniDialog(QDialog):
                 pix.scaled(
                     52,
                     52,
-                    QtCompat.KeepAspectRatio,
-                    QtCompat.SmoothTransformation,
+                    QtCompat.AspectRatioMode.KeepAspectRatio,
+                    QtCompat.TransformationMode.SmoothTransformation,
                 )
             )
         header_row.addWidget(logo_lbl)
@@ -1122,7 +1122,9 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.lbl_provider_info.setStyleSheet(
             "color: #00e5ff; font-size: 11px;"
         )
-        self.lbl_provider_info.setCursor(QtCompat.PointingHandCursor)
+        self.lbl_provider_info.setCursor(
+            QtCompat.CursorShape.PointingHandCursor
+        )
         self.lbl_provider_info.mousePressEvent = (
             lambda _e: self.tabs.setCurrentIndex(self.TAB_INFO)
         )
@@ -2227,7 +2229,7 @@ class ProfiliSezioniComuniDialog(QDialog):
                 self.cb_raster_sez.addItem(layer.name(), layer.id())
             elif isinstance(layer, QgsVectorLayer):
                 geom_type = QgsWkbTypes.geometryType(layer.wkbType())
-                if geom_type == QgsWkbTypes.LineGeometry:
+                if geom_type == QgsWkbTypes.GeometryType.LineGeometry:
                     self.cb_line_layer.addItem(layer.name(), layer.id())
         self.populate_confronto_rasters()
 
@@ -2282,7 +2284,7 @@ class ProfiliSezioniComuniDialog(QDialog):
                         label += f" / {province}"
                     label += ")"
                 item = QListWidgetItem(label)
-                item.setData(QtCompat.UserRole, r)
+                item.setData(QtCompat.ItemDataRole.UserRole, r)
                 self.list_comuni.addItem(item)
             self.lbl_comuni_status.setText(
                 _t(
