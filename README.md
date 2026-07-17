@@ -2,7 +2,7 @@
 
 [![QGIS](https://img.shields.io/badge/QGIS-3.16%2B%20%7C%204.x-589632?logo=qgis&logoColor=white)](https://qgis.org/)
 [![License](https://img.shields.io/badge/license-GPL--2.0-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.4-informational)](metadata.txt)
+[![Version](https://img.shields.io/badge/version-1.5.0-informational)](metadata.txt)
 
 Plugin QGIS per profili altimetrici, sezioni trasversali con volumi di sterro/riporto, download raster DTM italiani, ricerca confini comunali e confronto prima/dopo lavori (GeoPackage e differenza DTM).
 QGIS plugin for elevation profiles, cross sections with cut/fill volumes, Italian DTM raster download, Italian municipality boundary search and before/after works comparison (GeoPackage and DTM difference).
@@ -81,7 +81,8 @@ Il flusso tipico è:
 - campionamento quote lungo un asse;
 - supporto a `Open-Elevation`, `OpenTopoData` o raster locale `DEM/DTM`;
 - generazione grafico profilo;
-- creazione automatica di asse, campioni e picchetti come layer vettoriali.
+- creazione automatica di asse, campioni e picchetti come layer vettoriali;
+- opzione `Crea profilo 3D`: layer vettoriali Z-enabled (quota reale come coordinata Z) per la Vista Mappa 3D di QGIS, più esportazione opzionale come nuvola di punti LAS.
 
 ### Sezioni trasversali e volumi
 
@@ -89,7 +90,8 @@ Il flusso tipico è:
 - impostazione di semi-ampiezza e numero campioni per sezione;
 - confronto con quota/profilo di progetto;
 - calcolo aree di sezione, sterro, riporto e volumi tra sezioni;
-- layer dedicati per sezioni, centri, punti, curve, tratte volume, disegni tecnici e poligoni sterro/riporto.
+- layer dedicati per sezioni, centri, punti, curve, tratte volume, disegni tecnici e poligoni sterro/riporto;
+- opzione `Crea profilo 3D`: layer Z-enabled per ogni sezione (quota reale come coordinata Z) più esportazione opzionale come nuvola di punti LAS.
 
 ### Download raster da area
 
@@ -252,7 +254,8 @@ Dopo il calcolo il plugin produce:
 - layer asse del profilo;
 - layer campioni;
 - layer picchetti;
-- esportazione automatica in `GPKG` nella cartella output del progetto.
+- esportazione automatica in `GPKG` nella cartella output del progetto;
+- se `Crea profilo 3D` è attivo: layer `LineStringZ` (asse quotato) e `PointZ` (punti quotati) con la quota reale come coordinata Z, visualizzabili nella Vista Mappa 3D di QGIS, più un file `.las` (nuvola di punti) nella sottocartella `_pointcloud`.
 
 ### Comportamento utile
 
@@ -320,7 +323,8 @@ Il plugin costruisce i seguenti layer vettoriali:
 - curve;
 - tratte volumi;
 - disegni tecnici di sezione;
-- poligoni di sterro/riporto.
+- poligoni di sterro/riporto;
+- se `Crea profilo 3D` è attivo: un layer `LineStringZ` (una linea per sezione, quota reale come Z) e un layer `PointZ` con tutti i punti campionati delle sezioni.
 
 Genera inoltre:
 
@@ -328,7 +332,8 @@ Genera inoltre:
 - tabella volumi;
 - tabella di dettaglio sezione;
 - `GPKG` automatico;
-- layout di stampa esportabile.
+- layout di stampa esportabile;
+- se `Crea profilo 3D` è attivo: un file `.las` (nuvola di punti) con tutti i campioni delle sezioni, nella sottocartella `_pointcloud`.
 
 ## Uso del tab Comuni
 
@@ -587,6 +592,10 @@ Verifica:
 - disponibilità temporanea della sorgente remota;
 - eventuali limiti del provider.
 
+### La nuvola di punti 3D non compare come layer in QGIS
+
+Il file `.las` viene sempre scritto sul disco (cartella `_pointcloud`), ma per essere caricato automaticamente come layer in QGIS l'installazione deve includere il provider point cloud `PDAL`. Se il tuo QGIS non lo include, il plugin te lo segnala e il file resta comunque disponibile per essere aperto con CloudCompare, un'altra installazione QGIS con supporto PDAL o software LAS compatibili. Il layer vettoriale `LineStringZ`/`PointZ` (Vista Mappa 3D di QGIS) funziona invece sempre, senza requisiti aggiuntivi.
+
 ### Il tab Risultati mostra testo senza grafico/stile
 
 Il plugin usa `QtWebEngine` per un rendering ricco (grafico, accordion). Se il tuo QGIS/Python non include `QtWebEngine`, il plugin usa automaticamente un fallback più semplice (`QTextBrowser`), meno curato ma pienamente funzionale per consultare dati e tabelle.
@@ -603,6 +612,7 @@ Il plugin usa `QtWebEngine` per un rendering ricco (grafico, accordion). Se il t
 | `core_comuni.py` | ricerca comuni e confini |
 | `core_raster_download.py` | download e ritaglio raster |
 | `core_confronto.py` | confronto prima/dopo lavori (GeoPackage e DTM) |
+| `core_pointcloud.py` | scrittore nuvola di punti LAS 1.2 (solo libreria standard) |
 | `qt_compat.py` | compatibilità PyQt5/PyQt6 |
 | `metadata.txt` | metadati plugin QGIS |
 | `icon.svg` | icona del plugin |
@@ -685,7 +695,8 @@ Typical workflow:
 - elevation sampling along an axis;
 - support for `Open-Elevation`, `OpenTopoData` or a local `DEM/DTM` raster;
 - profile chart generation;
-- automatic creation of axis, sample points and pegs as vector layers.
+- automatic creation of axis, sample points and pegs as vector layers;
+- `Create 3D profile` option: Z-enabled vector layers (real elevation as the Z coordinate) for QGIS's 3D Map View, plus an optional LAS point cloud export.
 
 ### Cross sections and volumes
 
@@ -693,7 +704,8 @@ Typical workflow:
 - configurable half-width and samples per section;
 - comparison against a design elevation/profile;
 - section area, cut, fill and inter-section volume calculation;
-- dedicated layers for sections, centers, points, curves, volume segments, technical drawings and cut/fill polygons.
+- dedicated layers for sections, centers, points, curves, volume segments, technical drawings and cut/fill polygons;
+- `Create 3D profile` option: Z-enabled layer per section (real elevation as the Z coordinate) plus an optional LAS point cloud export.
 
 ### Area raster download
 
@@ -856,7 +868,8 @@ After the calculation the plugin generates:
 - profile axis layer;
 - samples layer;
 - pegs layer;
-- automatic `GPKG` export in the project output folder.
+- automatic `GPKG` export in the project output folder;
+- if `Create 3D profile` is enabled: a `LineStringZ` layer (elevation axis) and a `PointZ` layer (elevation samples) with real elevation as the Z coordinate, viewable in QGIS's 3D Map View, plus a `.las` point cloud file in the `_pointcloud` subfolder.
 
 ### Useful behavior
 
@@ -924,7 +937,8 @@ The plugin builds the following vector layers:
 - curves;
 - volume segments;
 - section technical drawings;
-- cut/fill polygons.
+- cut/fill polygons;
+- if `Create 3D profile` is enabled: a `LineStringZ` layer (one line per section, real elevation as Z) and a `PointZ` layer with all sampled section points.
 
 It also generates:
 
@@ -932,7 +946,8 @@ It also generates:
 - volumes table;
 - section detail table;
 - automatic `GPKG`;
-- exportable print layout.
+- exportable print layout;
+- if `Create 3D profile` is enabled: a `.las` point cloud file with all section samples, in the `_pointcloud` subfolder.
 
 ## Using the Municipalities tab
 
@@ -1191,6 +1206,10 @@ Check:
 - temporary availability of the remote source;
 - possible provider limits.
 
+### The 3D point cloud doesn't show up as a layer in QGIS
+
+The `.las` file is always written to disk (`_pointcloud` folder), but to be loaded automatically as a QGIS layer your installation needs the `PDAL` point cloud provider. If your QGIS build doesn't include it, the plugin tells you so and the file remains available to open with CloudCompare, another QGIS build with PDAL support, or any LAS-compatible software. The `LineStringZ`/`PointZ` vector layer (QGIS 3D Map View) always works, with no extra requirements.
+
 ### The Results tab shows plain text without chart/styling
 
 The plugin uses `QtWebEngine` for rich rendering (chart, accordion). If your QGIS/Python does not include `QtWebEngine`, the plugin automatically falls back to a simpler widget (`QTextBrowser`) — less polished but fully functional for reviewing data and tables.
@@ -1207,6 +1226,7 @@ The plugin uses `QtWebEngine` for rich rendering (chart, accordion). If your QGI
 | `core_comuni.py` | municipality search and boundaries |
 | `core_raster_download.py` | raster download and clipping |
 | `core_confronto.py` | before/after works comparison (GeoPackage and DTM) |
+| `core_pointcloud.py` | LAS 1.2 point cloud writer (standard library only) |
 | `qt_compat.py` | PyQt5/PyQt6 compatibility |
 | `metadata.txt` | QGIS plugin metadata |
 | `icon.svg` | plugin icon |

@@ -1133,6 +1133,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         layout.addWidget(src_group)
 
         row_btn = QHBoxLayout()
+        self.chk_3d_prof = QCheckBox()
+        row_btn.addWidget(self.chk_3d_prof)
         row_btn.addStretch()
         self.btn_draw_prof = QPushButton()
         row_btn.addWidget(self.btn_draw_prof)
@@ -1227,11 +1229,13 @@ class ProfiliSezioniComuniDialog(QDialog):
         row2.addWidget(self.sb_samples_sez)
         input_layout.addLayout(row2)
 
-        # Smooth + draw button
+        # Smooth + 3D + draw button
         row3 = QHBoxLayout()
         self.chk_smooth = QCheckBox()
         self.chk_smooth.setChecked(True)
         row3.addWidget(self.chk_smooth)
+        self.chk_3d_sez = QCheckBox()
+        row3.addWidget(self.chk_3d_sez)
         row3.addStretch()
         self.btn_draw_sez = QPushButton()
         row3.addWidget(self.btn_draw_sez)
@@ -1788,6 +1792,18 @@ class ProfiliSezioniComuniDialog(QDialog):
             _t(L, "ℹ Vedi limiti provider →", "ℹ See provider limits →")
         )
         self.btn_draw_prof.setText(_t(L, "Disegna asse", "Draw axis"))
+        self.chk_3d_prof.setText(
+            _t(L, "Crea profilo 3D", "Create 3D profile")
+        )
+        self.chk_3d_prof.setToolTip(
+            _t(
+                L,
+                "Genera anche un layer 3D con quota reale (vista mappa 3D "
+                "di QGIS) e una nuvola di punti LAS del profilo.",
+                "Also generate a real-elevation 3D layer (QGIS 3D map view) "
+                "and a LAS point cloud of the profile.",
+            )
+        )
 
         # Source combo items
         cur = self.cb_source.currentData()
@@ -1857,6 +1873,18 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.lbl_samples_sez.setText(_t(L, "Campioni/sez.:", "Samples/sec.:"))
         self.chk_smooth.setText(
             _t(L, "Raccorda tangenti curve", "Smooth curve tangents")
+        )
+        self.chk_3d_sez.setText(
+            _t(L, "Crea profilo 3D", "Create 3D profile")
+        )
+        self.chk_3d_sez.setToolTip(
+            _t(
+                L,
+                "Genera anche layer 3D con quota reale (vista mappa 3D di "
+                "QGIS) e una nuvola di punti LAS delle sezioni.",
+                "Also generate real-elevation 3D layers (QGIS 3D map view) "
+                "and a LAS point cloud of the sections.",
+            )
         )
         self.btn_draw_sez.setText(_t(L, "Disegna asse", "Draw axis"))
 
@@ -2203,6 +2231,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.sb_halfwidth.setValue(20.0)
         self.sb_samples_sez.setValue(41)
         self.chk_smooth.setChecked(True)
+        self.chk_3d_prof.setChecked(False)
+        self.chk_3d_sez.setChecked(False)
         self.le_start_elev.clear()
         self.le_end_elev.clear()
         self.le_grade_pct.clear()

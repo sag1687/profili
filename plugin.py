@@ -60,6 +60,7 @@ from .core_confronto import (
     list_output_gpkgs,
     read_gpkg_summary,
 )
+from .core_pointcloud import write_las_point_cloud
 
 
 class ProfiliSezioniComuniPlugin:
@@ -415,6 +416,222 @@ class ProfiliSezioniComuniPlugin:
             layer.triggerRepaint()
         except Exception:  # nosec B110
             pass
+
+    # ──────────────────────────────────────────────────────────────
+    # 3D outputs (Z-enabled layers + LAS point cloud)
+    # ──────────────────────────────────────────────────────────────
+
+    def _create_3d_axis_and_points(
+        self, xyz_points, crs_auth, group, stamp, name_prefix, label_prefix,
+        color,
+    ):
+        """Build a Z-enabled LineStringZ axis and PointZ samples layer from
+        a flat list of (x, y, z) tuples, plus a best-effort LAS point
+        cloud. Returns the vector layers created (the point cloud layer,
+        when it can be loaded, is added to the map but not returned since
+        it cannot be packaged into a GeoPackage)."""
+        from qgis.core import QgsFeature, QgsGeometry, QgsPoint, QgsVectorLayer
+
+        valid = [
+            (x, y, z)
+            for x, y, z in xyz_points
+            if x is not None and y is not None and z is not None
+        ]
+        layers = []
+
+        if len(valid) >= 2:
+            line_layer = QgsVectorLayer(
+                f"LineStringZ?crs={crs_auth}&field=id:integer",
+                f"{name_prefix}_3d_asse_{stamp}",
+                "memory",
+            )
+            feat = QgsFeature()
+            feat.setGeometry(
+                QgsGeometry.fromPolyline(
+                    [QgsPoint(x, y, z) for x, y, z in valid]
+                )
+            )
+            feat.setAttributes([1])
+            line_layer.dataProvider().addFeature(feat)
+            line_layer.updateExtents()
+            self._style_line_layer(line_layer, color, 1.0)
+            self._add_output_layer(
+                line_layer,
+                group,
+                "05 " + label_prefix + " 3D — asse / 3D axis",
+            )
+            layers.append(line_layer)
+
+        if valid:
+            pts_layer = QgsVectorLayer(
+                f"PointZ?crs={crs_auth}&field=id:integer"
+                f"&field=quota_m:double",
+                f"{name_prefix}_3d_punti_{stamp}",
+                "memory",
+            )
+            feats = []
+            for idx, (x, y, z) in enumerate(valid, 1):
+                f = QgsFeature()
+                f.setGeometry(QgsGeometry(QgsPoint(x, y, z)))
+                f.setAttributes([idx, float(z)])
+                feats.append(f)
+            pts_layer.dataProvider().addFeatures(feats)
+            pts_layer.updateExtents()
+            self._style_marker_layer(pts_layer, color, 1.6)
+            self._add_output_layer(
+                pts_layer,
+                group,
+                "06 " + label_prefix + " 3D — punti / 3D points",
+            )
+            layers.append(pts_layer)
+
+            self._export_and_try_load_point_cloud(
+                valid, name_prefix, group, label_prefix
+            )
+
+        return layers
+
+    def _export_and_try_load_point_cloud(
+        self, xyz_points, name_prefix, group, label_prefix
+    ):
+        """Write xyz_points as a LAS 1.2 file (stdlib-only, no external
+        dependency) and try to add it as a QgsPointCloudLayer. Loading a
+        raw LAS file requires QGIS to be built with PDAL support: when
+        that provider isn't available the file is still saved to disk and
+        the user is informed — this never raises/crashes the plugin."""
+        try:
+            out_dir = os.path.join(self._default_output_dir(), "_pointcloud")
+            os.makedirs(out_dir, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            safe_prefix = "".join(
+                c for c in name_prefix if c.isalnum() or c in ("_", "-")
+            ) or "profilo"
+            path = os.path.join(out_dir, f"{safe_prefix}_{stamp}.las")
+            n_points = write_las_point_cloud(xyz_points, path)
+        except Exception as exc:
+            self._push(
+                "Nuvola di punti / Point cloud",
+                f"Export LAS non riuscito / LAS export failed: {exc}",
+                "Warning",
+            )
+            return
+
+        try:
+            from qgis.core import QgsPointCloudLayer
+
+            pc_layer = QgsPointCloudLayer(
+                path, f"{name_prefix}_pointcloud_{stamp}", "pdal"
+            )
+        except Exception:
+            pc_layer = None
+
+        if pc_layer is not None and pc_layer.isValid():
+            self._add_output_layer(
+                pc_layer,
+                group,
+                label_prefix + " 3D — nuvola di punti / point cloud",
+            )
+        else:
+            self._push(
+                "Nuvola di punti / Point cloud",
+                (
+                    "File LAS salvato ({0} punti) in {1} — apribile con "
+                    "CloudCompare o con installazioni QGIS con supporto "
+                    "PDAL. / LAS file saved ({0} points) at {1} — open it "
+                    "with CloudCompare or a QGIS build with PDAL support."
+                ).format(n_points, path),
+                "Info",
+            )
+
+    def _create_sections_3d_layers(
+        self, data, crs_auth, group, stamp, xform_from_wgs
+    ):
+        """Z-enabled counterpart of the planimetric cross-section layers:
+        one LineStringZ per section (real elevation as Z) plus a combined
+        PointZ layer, and a best-effort LAS point cloud of all section
+        samples together."""
+        from qgis.core import (
+            QgsFeature,
+            QgsGeometry,
+            QgsPoint,
+            QgsPointXY,
+            QgsVectorLayer,
+        )
+
+        line_layer = QgsVectorLayer(
+            f"LineStringZ?crs={crs_auth}&field=sezione:integer"
+            f"&field=label:string(80)",
+            f"sezioni_3d_asse_{stamp}",
+            "memory",
+        )
+        pts_layer = QgsVectorLayer(
+            f"PointZ?crs={crs_auth}&field=sezione:integer"
+            f"&field=offset_m:double&field=quota_m:double",
+            f"sezioni_3d_punti_{stamp}",
+            "memory",
+        )
+
+        line_feats = []
+        pt_feats = []
+        all_xyz = []
+        for sec in data.get("sections", []):
+            sec_pts_3d = []
+            for p in sec.get("points", []):
+                lon, lat, z = p.get("lon"), p.get("lat"), p.get("elevation")
+                if lon is None or lat is None or z is None:
+                    continue
+                pm = xform_from_wgs.transform(QgsPointXY(lon, lat))
+                sec_pts_3d.append(
+                    (pm.x(), pm.y(), float(z), p.get("offset_m"))
+                )
+
+            if len(sec_pts_3d) >= 2:
+                f_line = QgsFeature()
+                f_line.setGeometry(
+                    QgsGeometry.fromPolyline(
+                        [QgsPoint(x, y, z) for x, y, z, _off in sec_pts_3d]
+                    )
+                )
+                f_line.setAttributes(
+                    [
+                        sec.get("index"),
+                        "S{0:02d}".format(int(sec.get("index") or 0)),
+                    ]
+                )
+                line_feats.append(f_line)
+
+            for x, y, z, off in sec_pts_3d:
+                f_pt = QgsFeature()
+                f_pt.setGeometry(QgsGeometry(QgsPoint(x, y, z)))
+                f_pt.setAttributes([sec.get("index"), off, z])
+                pt_feats.append(f_pt)
+                all_xyz.append((x, y, z))
+
+        layers = []
+        if line_feats:
+            line_layer.dataProvider().addFeatures(line_feats)
+            line_layer.updateExtents()
+            self._style_line_layer(line_layer, "#34d399", 0.8, "label")
+            self._add_output_layer(
+                line_layer, group, "09 Sezioni 3D / 3D sections"
+            )
+            layers.append(line_layer)
+        if pt_feats:
+            pts_layer.dataProvider().addFeatures(pt_feats)
+            pts_layer.updateExtents()
+            self._style_marker_layer(pts_layer, "#34d399", 1.4)
+            self._add_output_layer(
+                pts_layer,
+                group,
+                "10 Punti sezione 3D / 3D section points",
+            )
+            layers.append(pts_layer)
+        if all_xyz:
+            self._export_and_try_load_point_cloud(
+                all_xyz, "sezioni", group, "Sezioni / Sections"
+            )
+
+        return layers
 
     def _style_section_polygons(self, layer):
         try:
@@ -1210,7 +1427,11 @@ class ProfiliSezioniComuniPlugin:
         )
         self.last_results_html = results_html
         vector_layers = self._create_profile_vector_layers(
-            points_data, total_dist, points, chart_path
+            points_data,
+            total_dist,
+            points,
+            chart_path,
+            create_3d=self.dialog.chk_3d_prof.isChecked(),
         )
         try:
             gpkg_path = self._register_vector_outputs(vector_layers, "profilo")
@@ -1240,7 +1461,8 @@ class ProfiliSezioniComuniPlugin:
         )
 
     def _create_profile_vector_layers(
-        self, points_data, total_dist, axis_points, chart_path=None
+        self, points_data, total_dist, axis_points, chart_path=None,
+        create_3d=False,
     ):
         from qgis.core import (
             QgsVectorLayer,
@@ -1431,6 +1653,23 @@ class ProfiliSezioniComuniPlugin:
                 )
             )
 
+        if create_3d:
+            xyz_points = [
+                (p.get("x"), p.get("y"), p.get("elevation"))
+                for p in points_data
+            ]
+            layers.extend(
+                self._create_3d_axis_and_points(
+                    xyz_points,
+                    crs_auth,
+                    group,
+                    stamp,
+                    "profilo",
+                    "Profilo / Profile",
+                    "#34d399",
+                )
+            )
+
         return layers
 
     # ──────────────────────────────────────────────────────────────
@@ -1508,7 +1747,12 @@ class ProfiliSezioniComuniPlugin:
         results_html += generate_cross_sections_results_html(data)
         self.last_results_html = results_html
 
-        vector_layers = self._create_vector_layers(data, points, chart_path)
+        vector_layers = self._create_vector_layers(
+            data,
+            points,
+            chart_path,
+            create_3d=self.dialog.chk_3d_sez.isChecked(),
+        )
         try:
             gpkg_path = self._register_vector_outputs(vector_layers, "sezioni")
             if gpkg_path:
@@ -1626,7 +1870,9 @@ class ProfiliSezioniComuniPlugin:
     # Vector layer creation (for cross sections)
     # ──────────────────────────────────────────────────────────────
 
-    def _create_vector_layers(self, data, points, chart_path=None):
+    def _create_vector_layers(
+        self, data, points, chart_path=None, create_3d=False
+    ):
         import time
         from qgis.core import (
             QgsVectorLayer,
@@ -1913,6 +2159,14 @@ class ProfiliSezioniComuniPlugin:
         layers.extend(
             self._create_section_drawing_layers(data, stamp, chart_path, group)
         )
+
+        if create_3d:
+            layers.extend(
+                self._create_sections_3d_layers(
+                    data, crs_auth, group, stamp, xform_from_wgs
+                )
+            )
+
         return layers
 
     def _create_section_drawing_layers(
