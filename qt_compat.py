@@ -50,8 +50,3 @@ class _QtCompat:
 
 
 QtCompat = _QtCompat()
-
-
-def ensure_qt_compat(qt):
-    # Backward compatibility for old code that calls ensure_qt_compat(Qt)
-    return qt

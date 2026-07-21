@@ -54,14 +54,24 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout,
     QFrame,
 )
-from qgis.PyQt.QtCore import Qt, QSize, QSettings
+from qgis.PyQt.QtCore import QSize, QSettings
 from qgis.PyQt.QtGui import QPixmap
-from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer, QgsWkbTypes
+from qgis.core import (
+    QgsCoordinateTransform,
+    QgsPointXY,
+    QgsProject,
+    QgsRasterLayer,
+    QgsVectorLayer,
+    QgsWkbTypes,
+)
 
-from .core_raster_download import source_info_text, source_label
-from .qt_compat import ensure_qt_compat, QtCompat
-
-ensure_qt_compat(Qt)
+from .core_raster_download import (
+    bbox_text,
+    bbox_wgs84_from_points,
+    source_info_text,
+    source_label,
+)
+from .qt_compat import QtCompat
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -632,25 +642,19 @@ INFO_HTML = """
 <h2>CONFINI COMUNALI / MUNICIPAL BOUNDARIES</h2>
 <table>
   <tr><th>Sorgente / Source</th><th>Dettagli</th></tr>
-  <tr><td>Dati</td><td>&copy; OpenStreetMap contributors (ODbL 1.0)</td></tr>
-  <tr><td>API</td><td>Nominatim —
-      <a
-      href="https://nominatim.openstreetmap.org">nominatim.openstreetmap.org</a></td></tr>
-  <tr><td>Termini d'uso / Terms</td>
-      <td><span class="badge-warn">max 1 req/secondo, User-Agent
-      obbligatorio</span></td></tr>
-  <tr><td>Confini ufficiali / Official boundaries</td>
-      <td>ISTAT (<a href="https://www.istat.it">istat.it</a>) —
-      pagina download <a
-
-
-
-      href="https://www.istat.it/statistiche-per-temi/focus/informazioni-territoriali-e-cartografiche/unita-amministrative/"
-      >Unit&agrave; amministrative</a>.
-      Usare ISTAT per confini amministrativi ufficiali; Nominatim resta una
-      ricerca rapida in mappa.
-      / Use ISTAT for official administrative boundaries; Nominatim is a quick
-      map lookup.</td></tr>
+  <tr><td>Dati</td><td>ISTAT — Confini delle unit&agrave; amministrative a
+      fini statistici (non generalizzati) / ISTAT — administrative unit
+      boundaries for statistical purposes (non-generalised)</td></tr>
+  <tr><td>Archivio</td><td>
+      <a href="https://www.istat.it/it/archivio/222527"
+      >istat.it/it/archivio/222527</a> — scaricato una tantum (~100&nbsp;MB)
+      e messo in cache localmente, poi interrogato per singolo comune senza
+      ulteriori richieste di rete.
+      / downloaded once (~100&nbsp;MB) and cached locally, then queried per
+      municipality with no further network requests.</td></tr>
+  <tr><td>Licenza / Licence</td>
+      <td>ISTAT — riuso libero con citazione della fonte / free reuse with
+      source attribution.</td></tr>
 </table>
 
 <hr class="section-sep"/>
@@ -839,14 +843,20 @@ HELP_HTML = """
 
 <h3>5. Comuni / Municipalities</h3>
 <ul>
-  <li><b>IT:</b> Cerca un comune, seleziona il risultato e carica il confine
-  rapido OSM/Nominatim.</li>
-  <li><b>EN:</b> Search a municipality, select a result and load the quick
-  OSM/Nominatim boundary.</li>
-  <li><b>IT:</b> Per confini ufficiali usa il pulsante fonte ISTAT e scarica i
-  limiti amministrativi dalla pagina ufficiale.</li>
-  <li><b>EN:</b> For official boundaries use the ISTAT source button and
-  download administrative limits from the official page.</li>
+  <li><b>IT:</b> Cerca un comune per nome: la prima ricerca scarica una
+  tantum l'archivio ufficiale ISTAT (~100&nbsp;MB, poi rimane in cache),
+  seleziona un risultato e premi <code>Carica confine su mappa</code> per
+  ottenere il confine comunale esatto.</li>
+  <li><b>EN:</b> Search a municipality by name: the first search downloads
+  the official ISTAT archive once (~100&nbsp;MB, then cached), select a
+  result and press <code>Load boundary on map</code> to get the exact
+  municipal boundary.</li>
+  <li><b>IT:</b> Spunta <code>Usa come area di ritaglio</code> prima di
+  caricare il confine per impostare automaticamente il rettangolo di
+  inviluppo del comune come area nella scheda Download Raster.</li>
+  <li><b>EN:</b> Tick <code>Use as clip area</code> before loading the
+  boundary to automatically set the municipality's bounding box as the
+  area in the Download Raster tab.</li>
 </ul>
 
 <h3>6. Confronto prima/dopo lavori / Before-after works comparison</h3>
@@ -939,7 +949,7 @@ class ProfiliSezioniComuniDialog(QDialog):
     def __init__(self, parent=None, lang="it"):
         super().__init__(parent)
         self.lang = lang
-        self.setWindowTitle("GeoFusion — Profili, Sezioni e Comuni")
+        self.setWindowTitle("Profili, Sezioni e Comuni")
         self.resize(1120, 820)
         self.setMinimumSize(QSize(900, 620))
         self.setStyleSheet(SPATIQON_STYLE)
@@ -947,6 +957,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         self._comuni_results = []  # cached search results
         self._selected_comune = None
         self._download_area_points = None
+        self._istat_zip_path = None  # cached ISTAT archive (this session)
+        self._istat_stamp = None
 
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(10)
@@ -1059,6 +1071,12 @@ class ProfiliSezioniComuniDialog(QDialog):
         export_bar.addWidget(self.btn_print_layout)
         main_layout.addLayout(export_bar)
 
+        self.lbl_export_hint = QLabel()
+        self.lbl_export_hint.setStyleSheet(
+            "color:#566584; font-size:10px; padding:0 2px;"
+        )
+        main_layout.addWidget(self.lbl_export_hint)
+
         # ── Status bar ────────────────────────────────────────────
         status_layout = QHBoxLayout()
         self.lbl_status = QLabel("Pronto.")
@@ -1135,6 +1153,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         row_btn = QHBoxLayout()
         self.chk_3d_prof = QCheckBox()
         row_btn.addWidget(self.chk_3d_prof)
+        self.chk_profilo_express = QCheckBox()
+        row_btn.addWidget(self.chk_profilo_express)
         row_btn.addStretch()
         self.btn_draw_prof = QPushButton()
         row_btn.addWidget(self.btn_draw_prof)
@@ -1313,6 +1333,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.btn_draw_area = QPushButton()
         self.btn_draw_area.setObjectName("Primary")
         row_area.addWidget(self.btn_draw_area)
+        self.btn_draw_area_polygon = QPushButton()
+        row_area.addWidget(self.btn_draw_area_polygon)
         self.lbl_download_area = QLabel()
         self.lbl_download_area.setObjectName("Muted")
         self.lbl_download_area.setWordWrap(True)
@@ -1680,36 +1702,57 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.btn_params_reset.clicked.connect(self._reset_parameter_settings)
         self.btn_auto_defaults.clicked.connect(self.apply_auto_defaults)
 
-    def _build_tab_results(self):
-        layout = QVBoxLayout(self.tab_results)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+    #: Result categories, each with its own sub-tab + independent state, so
+    #: e.g. running Sezioni doesn't blank out a previously computed Profilo.
+    RESULT_CATEGORIES = ("profilo", "sezioni", "confronto")
 
-        self.web_view = None
-        try:
-            from qgis.PyQt.QtWebEngineWidgets import QWebEngineView
-
-            self.web_view = QWebEngineView()
-        except ImportError:
-            try:
-                from qgis.PyQt.QtWebKitWidgets import QWebView
-
-                self.web_view = QWebView()
-            except ImportError:
-                pass
-
-        if self.web_view is None:
-            self.web_view = QTextBrowser()
-            self.web_view.setOpenExternalLinks(True)
-
+    def _make_web_view(self):
         expanding = (
             getattr(QSizePolicy.Policy, "Expanding", None)
             if hasattr(QSizePolicy, "Policy")
             else getattr(QSizePolicy, "Expanding", 7)
         )
-        self.web_view.setSizePolicy(expanding, expanding)
-        layout.addWidget(self.web_view)
-        self._show_placeholder()
+        view = None
+        try:
+            from qgis.PyQt.QtWebEngineWidgets import QWebEngineView
+
+            view = QWebEngineView()
+        except ImportError:
+            try:
+                from qgis.PyQt.QtWebKitWidgets import QWebView
+
+                view = QWebView()
+            except ImportError:
+                pass
+        if view is None:
+            view = QTextBrowser()
+            view.setOpenExternalLinks(True)
+        view.setSizePolicy(expanding, expanding)
+        return view
+
+    def _build_tab_results(self):
+        layout = QVBoxLayout(self.tab_results)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.results_subtabs = QTabWidget()
+        self._result_views = {}
+        labels = {
+            "profilo": _t(self.lang, "Profilo", "Profile"),
+            "sezioni": _t(self.lang, "Sezioni", "Sections"),
+            "confronto": _t(self.lang, "Confronto", "Comparison"),
+        }
+        for category in self.RESULT_CATEGORIES:
+            view = self._make_web_view()
+            self._result_views[category] = view
+            self.results_subtabs.addTab(view, labels[category])
+        layout.addWidget(self.results_subtabs)
+
+        # Backward-compatible alias: the Profilo sub-view.
+        self.web_view = self._result_views["profilo"]
+
+        for category in self.RESULT_CATEGORIES:
+            self._show_placeholder(category)
 
     def _build_tab_info(self):
         layout = QVBoxLayout(self.tab_info)
@@ -1757,8 +1800,8 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.setWindowTitle(
             _t(
                 L,
-                "GeoFusion — Profili, Sezioni e Comuni",
-                "GeoFusion — Profiles, Sections & Municipalities",
+                "Profili, Sezioni e Comuni",
+                "Profiles, Sections & Municipalities",
             )
         )
         self.btn_close.setText(_t(L, "Chiudi", "Close"))
@@ -1782,6 +1825,27 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.tabs.setTabText(self.TAB_HELP, "Help")
         self.tabs.setTabText(self.TAB_INFO, "Info")
 
+        # Results sub-tabs (profilo / sezioni / confronto)
+        sub_labels = {
+            "profilo": _t(L, "Profilo", "Profile"),
+            "sezioni": _t(L, "Sezioni", "Sections"),
+            "confronto": _t(L, "Confronto", "Comparison"),
+        }
+        for i, category in enumerate(self.RESULT_CATEGORIES):
+            self.results_subtabs.setTabText(i, sub_labels[category])
+
+        self.lbl_export_hint.setText(
+            _t(
+                L,
+                "I comandi qui sopra esportano l'ultimo risultato "
+                "calcolato (Profilo o Sezioni), non necessariamente la "
+                "scheda che si sta visualizzando.",
+                "The commands above export the most recently computed "
+                "result (Profile or Sections), not necessarily the tab "
+                "currently shown.",
+            )
+        )
+
         # Tab Profilo
         grp_prof = self.tab_prof.findChild(QGroupBox, "grpProfSrc")
         if grp_prof:
@@ -1802,6 +1866,22 @@ class ProfiliSezioniComuniDialog(QDialog):
                 "di QGIS) e una nuvola di punti LAS del profilo.",
                 "Also generate a real-elevation 3D layer (QGIS 3D map view) "
                 "and a LAS point cloud of the profile.",
+            )
+        )
+        self.chk_profilo_express.setText(
+            _t(L, "ProfiloExpress (anteprima live)", "ProfiloExpress (live preview)")
+        )
+        self.chk_profilo_express.setToolTip(
+            _t(
+                L,
+                "Mentre disegni l'asse sulla mappa, mostra un'anteprima "
+                "live del profilo altimetrico in una finestra fluttuante "
+                "(richiede un raster locale come sorgente: le sorgenti "
+                "online non vengono campionate in tempo reale).",
+                "While drawing the axis on the map, shows a live preview "
+                "of the elevation profile in a floating window (requires "
+                "a local raster source: online sources are not sampled "
+                "in real time).",
             )
         )
 
@@ -1858,6 +1938,7 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.cb_axis_source.blockSignals(False)
 
         self.lbl_line_layer.setText(_t(L, "Layer linea:", "Line layer:"))
+        self.lbl_feature.setText(_t(L, "Elemento:", "Feature:"))
         self.btn_layer_sez.setText(
             _t(L, "Calcola da layer", "Calculate from layer")
         )
@@ -1909,6 +1990,19 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.chk_clip_area.setText(
             _t(L, "Usa come area di ritaglio", "Use as clip area")
         )
+        self.chk_clip_area.setToolTip(
+            _t(
+                L,
+                "Alla pressione di 'Carica confine su mappa', imposta il "
+                "rettangolo di inviluppo del comune come area nella scheda "
+                "Download Raster (il ritaglio resta rettangolare, non "
+                "segue il confine esatto del comune).",
+                "When 'Load boundary on map' is pressed, sets the "
+                "municipality's bounding box as the area in the Download "
+                "Raster tab (the clip stays rectangular, it does not "
+                "follow the exact municipal boundary).",
+            )
+        )
 
         # Tab Download Raster
         grp_down = self.tab_download.findChild(QGroupBox, "grpDownloadArea")
@@ -1919,14 +2013,21 @@ class ProfiliSezioniComuniDialog(QDialog):
         self.btn_draw_area.setText(
             _t(L, "SHIFT + disegna area", "SHIFT + draw area")
         )
+        self.btn_draw_area_polygon.setText(
+            _t(L, "Disegna poligono", "Draw polygon")
+        )
         if not self._download_area_points:
             self.lbl_download_area.setText(
                 _t(
                     L,
-                    "Nessuna area selezionata. Tieni premuto SHIFT, trascina "
-                    "un rettangolo sulla mappa e rilascia.",
-                    "No area selected. Hold SHIFT, drag a rectangle on the "
-                    "map and release.",
+                    "Nessuna area selezionata. Tieni premuto SHIFT e "
+                    "trascina un rettangolo, oppure usa \"Disegna poligono\" "
+                    "per un'area di forma qualsiasi (il raster verra' "
+                    "ritagliato esattamente sulla forma disegnata).",
+                    "No area selected. Hold SHIFT and drag a rectangle, or "
+                    "use \"Draw polygon\" for an arbitrarily-shaped area "
+                    "(the raster will be clipped exactly to the drawn "
+                    "shape).",
                 )
             )
         self.lbl_raster_source.setText(_t(L, "Sorgente:", "Source:"))
@@ -2283,6 +2384,51 @@ class ProfiliSezioniComuniDialog(QDialog):
     # Comuni tab logic
     # ──────────────────────────────────────────────────────────────
 
+    def _istat_cache_dir(self):
+        project = QgsProject.instance()
+        try:
+            base = project.homePath()
+        except Exception:
+            base = ""
+        if not base:
+            base = os.path.expanduser("~/ProfiliSezioniComuni_Output")
+        cache_dir = os.path.join(
+            base, "profili_sezioni_output", "_istat_confini"
+        )
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    def _ensure_istat_ready(self):
+        """Download (once per session) or reuse the cached official ISTAT
+        boundaries archive. Returns (zip_path, stamp)."""
+        from .core_comuni import ensure_istat_archive
+
+        if self._istat_zip_path and self._istat_stamp:
+            return self._istat_zip_path, self._istat_stamp
+
+        L = self.lang
+        self.lbl_comuni_status.setText(
+            _t(
+                L,
+                "Scarico archivio ISTAT (una tantum, ~100 MB)...",
+                "Downloading ISTAT archive (one-off, ~100 MB)...",
+            )
+        )
+        QApplication.processEvents()
+
+        def _progress(percent=0, message="", **kwargs):
+            if message:
+                self.lbl_comuni_status.setText(message)
+            QApplication.processEvents()
+            return True
+
+        zip_path, stamp = ensure_istat_archive(
+            self._istat_cache_dir(), _progress
+        )
+        self._istat_zip_path = zip_path
+        self._istat_stamp = stamp
+        return zip_path, stamp
+
     def do_comuni_search(self):
         from .core_comuni import search_comuni
 
@@ -2290,43 +2436,60 @@ class ProfiliSezioniComuniDialog(QDialog):
         if not query:
             return
         L = self.lang
-        self.lbl_comuni_status.setText(
-            _t(L, "Ricerca in corso...", "Searching...")
-        )
-        QApplication.processEvents()
+        # Disabled for the duration: _ensure_istat_ready()/search_comuni()
+        # pump the event loop (first-time ~100 MB download, shapefile
+        # scan), so a second click here would re-enter this method while
+        # the first call still has the cache zip open/being written.
+        self.btn_comuni_search.setEnabled(False)
         try:
-            results = search_comuni(query, limit=15)
-            self._comuni_results = results
-            self.list_comuni.clear()
-            if not results:
+            try:
+                zip_path, stamp = self._ensure_istat_ready()
+            except Exception as e:
                 self.lbl_comuni_status.setText(
-                    _t(L, "Nessun risultato trovato.", "No results found.")
+                    _t(L, f"Errore: {e}", f"Error: {e}")
                 )
                 return
-            for r in results:
-                addr = r.get("address", {})
-                region = addr.get("region") or addr.get("state") or ""
-                province = addr.get("county") or addr.get("province") or ""
-                label = r.get("name", "")
-                if region:
-                    label += f"  ({region}"
-                    if province:
-                        label += f" / {province}"
-                    label += ")"
-                item = QListWidgetItem(label)
-                item.setData(QtCompat.ItemDataRole.UserRole, r)
-                self.list_comuni.addItem(item)
+
             self.lbl_comuni_status.setText(
-                _t(
-                    L,
-                    f"{len(results)} risultati trovati.",
-                    f"{len(results)} results found.",
+                _t(L, "Ricerca in corso...", "Searching...")
+            )
+            QApplication.processEvents()
+            try:
+                results = search_comuni(zip_path, stamp, query, limit=15)
+                self._comuni_results = results
+                self.list_comuni.clear()
+                if not results:
+                    self.lbl_comuni_status.setText(
+                        _t(
+                            L,
+                            "Nessun risultato trovato.",
+                            "No results found.",
+                        )
+                    )
+                    return
+                for r in results:
+                    label = r.get("name", "")
+                    extra = " / ".join(
+                        x for x in (r.get("province"), r.get("region")) if x
+                    )
+                    if extra:
+                        label += f"  ({extra})"
+                    item = QListWidgetItem(label)
+                    item.setData(QtCompat.ItemDataRole.UserRole, r)
+                    self.list_comuni.addItem(item)
+                self.lbl_comuni_status.setText(
+                    _t(
+                        L,
+                        f"{len(results)} risultati trovati.",
+                        f"{len(results)} results found.",
+                    )
                 )
-            )
-        except Exception as e:
-            self.lbl_comuni_status.setText(
-                _t(L, f"Errore: {e}", f"Error: {e}")
-            )
+            except Exception as e:
+                self.lbl_comuni_status.setText(
+                    _t(L, f"Errore: {e}", f"Error: {e}")
+                )
+        finally:
+            self.btn_comuni_search.setEnabled(True)
 
     def _on_comune_selected(self, row):
         if row < 0 or row >= len(self._comuni_results):
@@ -2337,16 +2500,16 @@ class ProfiliSezioniComuniDialog(QDialog):
         comune = self._comuni_results[row]
         self._selected_comune = comune
         self.btn_comuni_load.setEnabled(True)
-        addr = comune.get("address", {})
-        region = addr.get("region") or addr.get("state") or "—"
-        province = addr.get("county") or addr.get("province") or "—"
         L = self.lang
+        province = comune.get("province") or "—"
+        if comune.get("sigla"):
+            province += f" ({comune['sigla']})"
         self.lbl_comune_info.setText(
             f"<b>{comune.get('name', '')}</b><br>"
-            f"{_t(L, 'Regione', 'Region')}: {region}<br>"
+            f"{_t(L, 'Regione', 'Region')}: {comune.get('region') or '—'}<br>"
             f"{_t(L, 'Provincia', 'Province')}: {province}<br>"
-            f"{_t(L, 'Posizione', 'Position')}: {comune.get('lat', 0):.5f}, "
-            f"{comune.get('lon', 0):.5f}"
+            f"{_t(L, 'Codice ISTAT', 'ISTAT code')}: "
+            f"{comune.get('pro_com', '—')}"
         )
 
     def do_load_boundary(self):
@@ -2356,39 +2519,108 @@ class ProfiliSezioniComuniDialog(QDialog):
 
         L = self.lang
         comune = self._selected_comune
-        self.lbl_comuni_status.setText(
-            _t(L, "Scarico confine...", "Downloading boundary...")
-        )
-        QApplication.processEvents()
+        # See do_comuni_search() for why this is disabled for the duration.
+        self.btn_comuni_load.setEnabled(False)
         try:
-            feature = fetch_comune_boundary(
-                comune.get("osm_type", "relation"), comune.get("osm_id", "")
+            try:
+                zip_path, stamp = self._ensure_istat_ready()
+            except Exception as e:
+                self.lbl_comuni_status.setText(
+                    _t(L, f"Errore: {e}", f"Error: {e}")
+                )
+                return
+
+            self.lbl_comuni_status.setText(
+                _t(L, "Scarico confine...", "Downloading boundary...")
             )
-            if feature is None:
+            QApplication.processEvents()
+            try:
+                result = fetch_comune_boundary(
+                    zip_path, stamp, comune.get("pro_com")
+                )
+                if result is None:
+                    self.lbl_comuni_status.setText(
+                        _t(
+                            L,
+                            "Confine non disponibile su ISTAT.",
+                            "Boundary not available from ISTAT.",
+                        )
+                    )
+                    return
+                geom, attrs = result
+                name = comune.get("name", "Comune")
+                layer = create_boundary_layer(
+                    geom,
+                    attrs,
+                    f"{_t(L, 'Confine', 'Boundary')} — {name}",
+                )
                 self.lbl_comuni_status.setText(
                     _t(
                         L,
-                        "Confine non disponibile su OSM.",
-                        "Boundary not available on OSM.",
+                        f"Confine caricato: {name}",
+                        f"Boundary loaded: {name}",
                     )
                 )
-                return
-            name = comune.get("name", "Comune")
-            create_boundary_layer(feature, f"Confine — {name}")
-            self.lbl_comuni_status.setText(
-                _t(L, f"Confine caricato: {name}", f"Boundary loaded: {name}")
+                if self.chk_clip_area.isChecked():
+                    self._set_download_area_from_comune(layer, name)
+            except Exception as e:
+                self.lbl_comuni_status.setText(
+                    _t(L, f"Errore: {e}", f"Error: {e}")
+                )
+        finally:
+            self.btn_comuni_load.setEnabled(True)
+
+    def _set_download_area_from_comune(self, boundary_layer, name):
+        """Use the loaded municipality boundary's bounding box as the
+        Download Raster tab's area of interest (chk_clip_area). Restricts
+        raster downloads to just that municipality's extent instead of a
+        manually-drawn rectangle."""
+        project = QgsProject.instance()
+        xform = QgsCoordinateTransform(
+            boundary_layer.crs(), project.crs(), project.transformContext()
+        )
+        extent = xform.transformBoundingBox(boundary_layer.extent())
+        points = [
+            QgsPointXY(extent.xMinimum(), extent.yMinimum()),
+            QgsPointXY(extent.xMaximum(), extent.yMinimum()),
+            QgsPointXY(extent.xMaximum(), extent.yMaximum()),
+            QgsPointXY(extent.xMinimum(), extent.yMaximum()),
+        ]
+        rect_wgs84 = bbox_wgs84_from_points(points)
+        self.set_download_area(points, bbox_text(rect_wgs84))
+        L = self.lang
+        self.lbl_comuni_status.setText(
+            _t(
+                L,
+                f"Area di download impostata sul rettangolo di {name}.",
+                f"Download area set to {name}'s bounding box.",
             )
-        except Exception as e:
-            self.lbl_comuni_status.setText(
-                _t(L, f"Errore: {e}", f"Error: {e}")
-            )
+        )
+        self.tabs.setCurrentIndex(self.TAB_DOWNLOAD)
 
     # ──────────────────────────────────────────────────────────────
     # Results display
     # ──────────────────────────────────────────────────────────────
 
-    def _show_placeholder(self):
+    def _show_placeholder(self, category="profilo"):
         L = self.lang
+        hints = {
+            "profilo": _t(
+                L,
+                "Disegna un asse sulla mappa o calcola da un layer.",
+                "Draw an axis on the map or calculate from a layer.",
+            ),
+            "sezioni": _t(
+                L,
+                "Disegna un asse per le sezioni trasversali.",
+                "Draw an axis for the cross sections.",
+            ),
+            "confronto": _t(
+                L,
+                "Confronta due GeoPackage o due DTM prima/dopo lavori.",
+                "Compare two GeoPackages or two before/after DTMs.",
+            ),
+        }
         html = f"""
         <html><head><style>
             body {{ margin:0; padding:40px; background:#12151e;
@@ -2406,20 +2638,22 @@ class ProfiliSezioniComuniDialog(QDialog):
         <div class="placeholder">
             <div class="icon">📐</div>
             <h3>{_t(L, "Nessun risultato", "No results yet")}</h3>
-            <p>{_t(L, "Disegna un asse sulla mappa o calcola da un layer.",
-                "Draw an axis on the map or calculate from a layer.")}</p>
+            <p>{hints.get(category, hints["profilo"])}</p>
         </div></body></html>
         """
-        self._set_html(html)
+        self._set_html(html, category)
 
-    def _set_html(self, html):
-        if hasattr(self.web_view, "setHtml"):
-            self.web_view.setHtml(html)
+    def _set_html(self, html, category="profilo"):
+        view = self._result_views.get(category, self.web_view)
+        if hasattr(view, "setHtml"):
+            view.setHtml(html)
         else:
-            self.web_view.setPlainText(html)
+            view.setPlainText(html)
 
-    def show_results(self, html_content):
-        """Show results HTML in the Results tab and switch to it."""
+    def show_results(self, html_content, category="profilo"):
+        """Show results HTML in the given Results sub-tab (profilo /
+        sezioni / confronto — each keeps its own state, so switching
+        features doesn't blank out a previous result) and switch to it."""
         full_html = f"""<!DOCTYPE html>
         <html><head><style>
             body {{ margin:0; padding:16px; background:#12151e;
@@ -2456,6 +2690,17 @@ class ProfiliSezioniComuniDialog(QDialog):
                                 border-radius:8px; padding:12px;
                                 margin-bottom:14px;
                                 overflow-x:auto; }}
+            .chart-container-light {{ background:#f4f4f4;
+                                border:1px solid #2d3757;
+                                border-radius:8px; padding:12px;
+                                margin-bottom:14px;
+                                overflow-x:auto; }}
+            .chart-row {{ display:flex; flex-wrap:wrap; gap:14px; }}
+            .chart-col {{ flex:1 1 460px; min-width:0; }}
+            .chart-col h4 {{ font-size:12px; font-weight:600;
+                             color:#8ba3c7; margin:0 0 8px;
+                             text-transform:uppercase;
+                             letter-spacing:.5px; }}
             .sections-grid {{ display:flex; flex-wrap:wrap; gap:10px;
                               padding:8px 0; }}
             .section-card {{ flex:0 0 auto; text-align:center; width:140px; }}
@@ -2466,7 +2711,10 @@ class ProfiliSezioniComuniDialog(QDialog):
         </style></head><body>
             {html_content}
         </body></html>"""
-        self._set_html(full_html)
+        self._set_html(full_html, category)
+        view = self._result_views.get(category)
+        if view is not None:
+            self.results_subtabs.setCurrentWidget(view)
         self.tabs.setCurrentIndex(self.TAB_RISULTATI)
 
     def enable_exports(self, enabled):

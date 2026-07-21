@@ -64,6 +64,11 @@ def calculate_cross_sections(
       ref_elevation, total_cut_m3, total_fill_m3,
       sections, volumes, road_metrics, curve_points
     """
+    if interval_m <= 0:
+        raise ValueError("interval_m must be greater than zero.")
+    if samples_per_section < 2:
+        raise ValueError("samples_per_section must be at least 2.")
+
     try:
         from pyproj import Geod
     except ImportError:
@@ -71,49 +76,54 @@ def calculate_cross_sections(
 
     geod = Geod(ellps="WGS84")
 
-    crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
-    try:
-        xform_to_wgs = QgsCoordinateTransform(
-            QgsProject.instance().crs(),
-            crs_wgs,
-            QgsProject.instance().transformContext(),
-        )
-        xform_from_wgs = QgsCoordinateTransform(
-            crs_wgs,
-            raster_layer.crs(),
-            QgsProject.instance().transformContext(),
-        )
-    except Exception:
-        xform_to_wgs = QgsCoordinateTransform(
-            QgsProject.instance().crs(), crs_wgs, QgsProject.instance()
-        )
-        xform_from_wgs = QgsCoordinateTransform(
-            crs_wgs, raster_layer.crs(), QgsProject.instance()
-        )
+    if not raster_layer.crs().isValid():
+        raise ValueError("The selected raster has no valid CRS.")
 
-    pts_wgs = []
+    crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+    xform_to_wgs = QgsCoordinateTransform(
+        QgsProject.instance().crs(),
+        crs_wgs,
+        QgsProject.instance().transformContext(),
+    )
+    xform_from_wgs = QgsCoordinateTransform(
+        crs_wgs,
+        raster_layer.crs(),
+        QgsProject.instance().transformContext(),
+    )
+
+    pts_wgs_raw = []
     for p in line_points:
         pt_wgs = xform_to_wgs.transform(QgsPointXY(p.x(), p.y()))
-        pts_wgs.append((pt_wgs.x(), pt_wgs.y()))
+        pts_wgs_raw.append((pt_wgs.x(), pt_wgs.y()))
+
+    # Drop consecutive duplicate/near-coincident vertices (e.g. an accidental
+    # double click while digitizing) so that `segs` always has exactly one
+    # entry per (pts_wgs[i], pts_wgs[i+1]) pair — curve_points below indexes
+    # segs by vertex index and requires this 1:1 correspondence.
+    pts_wgs = pts_wgs_raw[:1]
+    for pt in pts_wgs_raw[1:]:
+        prev = pts_wgs[-1]
+        _az1, _az2, dist = geod.inv(prev[0], prev[1], pt[0], pt[1])
+        if dist > 0:
+            pts_wgs.append(pt)
+
+    if len(pts_wgs) < 2:
+        raise ValueError("Invalid axis or zero-length line.")
 
     segs = []
     total_len = 0.0
     for a, b in zip(pts_wgs[:-1], pts_wgs[1:]):
         _az1, _az2, dist = geod.inv(a[0], a[1], b[0], b[1])
-        if dist > 0:
-            segs.append(
-                {
-                    "a": a,
-                    "b": b,
-                    "d0": total_len,
-                    "d1": total_len + dist,
-                    "az": _az1,
-                }
-            )
-            total_len += dist
-
-    if not segs:
-        raise ValueError("Invalid axis or zero-length line.")
+        segs.append(
+            {
+                "a": a,
+                "b": b,
+                "d0": total_len,
+                "d1": total_len + dist,
+                "az": _az1,
+            }
+        )
+        total_len += dist
 
     # Design grade logic
     design_start = design_start_elev
@@ -125,6 +135,12 @@ def calculate_cross_sections(
         and design_grade is not None
     ):
         design_end = design_start + (design_grade / 100.0) * total_len
+    elif (
+        design_end is not None
+        and design_start is None
+        and design_grade is not None
+    ):
+        design_start = design_end - (design_grade / 100.0) * total_len
     elif (
         None not in (design_start, design_end)
         and design_grade is None
@@ -185,11 +201,15 @@ def calculate_cross_sections(
             raw_nodata = method(band)
             if raw_nodata is not None:
                 nodata_values.add(float(raw_nodata))
-        except Exception:  # nosec B110
+        except (TypeError, ValueError):  # nosec B110
             pass
+
+    raster_extent = raster_layer.extent()
 
     def _sample_elevation(lon, lat):
         pt = xform_from_wgs.transform(QgsPointXY(lon, lat))
+        if not raster_extent.contains(pt):
+            return None
         res = dp.identify(pt, QgsRaster.IdentifyFormat.IdentifyFormatValue)
         if res.isValid():
             raw = res.results().get(band)
@@ -201,7 +221,7 @@ def calculate_cross_sections(
                     if math.isclose(value, nodata, rel_tol=0.0, abs_tol=1e-9):
                         return None
                 return value
-            except Exception:  # nosec B110
+            except (TypeError, ValueError):  # nosec B110
                 pass
         return None
 
@@ -276,6 +296,22 @@ def calculate_cross_sections(
                 "cut_area_m2": round(cut_area, 3),
                 "fill_area_m2": round(fill_area, 3),
             }
+        )
+
+    if not any(s["min_elevation"] is not None for s in sections):
+        raster_crs = raster_layer.crs()
+        project_crs = QgsProject.instance().crs()
+        raise RuntimeError(
+            "Il raster selezionato non ha restituito quote valide lungo "
+            "il tracciato delle sezioni. "
+            "Controlla che il tracciato cada dentro l'estensione del DEM, "
+            "che il DEM abbia "
+            "un CRS valido e che la banda selezionata contenga quote. "
+            "Project CRS: {0}; Raster CRS: {1}; Raster extent: {2}".format(
+                project_crs.authid() or project_crs.description(),
+                raster_crs.authid() or raster_crs.description(),
+                raster_layer.extent().toString(),
+            )
         )
 
     volumes = []
@@ -629,7 +665,7 @@ def generate_cross_sections_svg(result, project_title, created_at):
     .right {{ text-anchor:end; }}
   </style>
 </defs>
-<rect width="100%" height="100%" fill="#12151e"/>
+<rect width="{width}" height="{height}" fill="#12151e"/>
 <text x="70" y="52" class="title">Cross Sections and Road Profile /
 Sezioni Trasversali</text>
 <text x="70" y="80" class="subtitle">

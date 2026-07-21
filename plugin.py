@@ -25,11 +25,15 @@ import math
 
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox, QApplication
 from qgis.PyQt.QtGui import QDesktopServices, QIcon
-from qgis.PyQt.QtCore import QUrl
-from qgis.core import Qgis, QgsProject, QgsPointXY
+from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.core import Qgis, QgsMessageLog, QgsProject, QgsPointXY
 
 from .dialog import ProfiliSezioniComuniDialog
-from .map_tool import DrawPolylineTool, DrawRectangleAreaTool
+from .map_tool import (
+    DrawPolygonAreaTool,
+    DrawPolylineTool,
+    DrawRectangleAreaTool,
+)
 from .core_raster_download import (
     ISTAT_ADMIN_BOUNDARIES_PAGE,
     RASTER_SOURCES,
@@ -42,6 +46,8 @@ from .core_raster_download import (
 from .core_elevation import (
     calculate_profile,
     generate_profile_svg,
+    generate_profile_svg_pegstyle,
+    generate_quick_profile_svg,
     generate_profile_results_html,
     export_profile_csv,
     build_pickets,
@@ -64,6 +70,12 @@ from .core_pointcloud import write_las_point_cloud
 
 
 class ProfiliSezioniComuniPlugin:
+    # Scale denominator below which dense per-feature labels (pickets,
+    # section markers) become visible. Above it (zoomed further out, as
+    # over a long alignment) the features still render, just unlabelled,
+    # instead of collapsing into unreadable overlapping text.
+    DENSE_LABEL_MIN_SCALE = 5000
+
     def __init__(self, iface):
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
@@ -71,6 +83,7 @@ class ProfiliSezioniComuniPlugin:
         self.dialog = None
         self.map_tool = None
         self.area_tool = None
+        self.area_tool_polygon = None
 
         # last results state
         self.last_points_data = None
@@ -85,6 +98,15 @@ class ProfiliSezioniComuniPlugin:
         self.last_chart_png_path = None
         self.current_mode = "profile"  # "profile" | "sections"
         self._last_drawn_points = None
+        # Shared guard across raster download / GeoPackage compare / DTM
+        # compare: each already disables its own button while running, but
+        # nothing stopped the user from switching tabs and starting a
+        # *different* long GDAL/network operation on top of it.
+        self._busy = False
+
+        # ProfiloExpress: live profile preview while drawing on the canvas
+        self._profilo_express_raster = None
+        self._profilo_express_preview = None
 
     # ──────────────────────────────────────────────────────────────
     # initGui / unload
@@ -99,12 +121,66 @@ class ProfiliSezioniComuniPlugin:
         )
         self.action.triggered.connect(self.run)
         self.iface.addToolBarIcon(self.action)
-        self.iface.addPluginToMenu("&GeoFusion Tools", self.action)
+        self.iface.addPluginToMenu("&Profili, Sezioni e Comuni", self.action)
 
     def unload(self):
+        # Unset any map tool of ours still active on the canvas and drop our
+        # reference to it: QgsMapCanvas keeps calling into the C++ side of
+        # the tool on the next mouse event even after Python has no more
+        # references, which crashes if we don't detach it here first.
+        canvas = self.iface.mapCanvas()
+        for tool, signal, slot in (
+            (self.map_tool, "lineDrawn", self._on_line_drawn),
+            (self.map_tool, "previewChanged", self._on_profilo_express_preview),
+            (self.map_tool, "drawingCancelled", self._on_drawing_cancelled),
+            (self.area_tool, "areaDrawn", self._on_area_drawn),
+            (self.area_tool, "drawingCancelled", self._on_drawing_cancelled),
+            (self.area_tool_polygon, "areaDrawn", self._on_area_drawn),
+            (
+                self.area_tool_polygon,
+                "drawingCancelled",
+                self._on_drawing_cancelled,
+            ),
+        ):
+            if tool is None:
+                continue
+            if canvas.mapTool() is tool:
+                canvas.unsetMapTool(tool)
+            try:
+                getattr(tool, signal).disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self.map_tool = None
+        self.area_tool = None
+        self.area_tool_polygon = None
+
+        # `close()` alone only hides these QDialogs: parented to
+        # iface.mainWindow(), the underlying C++ objects (and every signal
+        # connection still pointing back into this plugin instance, e.g.
+        # button clicks -> self.run()) would otherwise stay alive for the
+        # rest of the QGIS session. deleteLater() actually schedules their
+        # destruction, which also drops those connections.
+        if self._profilo_express_preview is not None:
+            self._profilo_express_preview.close()
+            self._profilo_express_preview.deleteLater()
+            self._profilo_express_preview = None
+
+        if self.dialog is not None:
+            self.dialog.close()
+            self.dialog.deleteLater()
+            self.dialog = None
+
         if self.action:
             self.iface.removeToolBarIcon(self.action)
-            self.iface.removePluginMenu("&GeoFusion Tools", self.action)
+            self.iface.removePluginMenu(
+                "&Profili, Sezioni e Comuni", self.action
+            )
+            try:
+                self.action.triggered.disconnect(self.run)
+            except (TypeError, RuntimeError):
+                pass
+            self.action.deleteLater()
+            self.action = None
 
     # ──────────────────────────────────────────────────────────────
     # Helpers
@@ -147,9 +223,20 @@ class ProfiliSezioniComuniPlugin:
         group = root.findGroup(group_name)
         return group or root.addGroup(group_name)
 
-    def _new_output_group(self, title):
+    def _new_output_group(self, title, is_raster=False):
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return self._output_root_group().addGroup(f"{title} - {stamp}")
+        name = f"{title} - {stamp}"
+        root = self._output_root_group()
+        if is_raster:
+            # Raster groups (downloaded DTM, DTM-comparison diff) always
+            # get appended at the bottom of our group, so they render
+            # underneath any vector output group -- regardless of whether
+            # the raster was loaded before or after the vectors.
+            return root.addGroup(name)
+        # Vector output groups (profile, sections, comparison) always get
+        # inserted at the top, so they stay visible on top of any raster
+        # already present instead of being hidden underneath it.
+        return root.insertGroup(0, name)
 
     def _ensure_subgroup(self, parent_group, name):
         group = parent_group.findGroup(name) if parent_group else None
@@ -222,20 +309,28 @@ class ProfiliSezioniComuniPlugin:
         QApplication.processEvents()
         return True
 
-    def _svg_chart_html(self, svg_content, name):
-        image_path = self._svg_to_png(svg_content, name)
-        self.last_chart_png_path = image_path
-        return self._chart_image_html(image_path, svg_content)
-
     def _chart_image_html(self, image_path, fallback_svg):
-        if not image_path:
-            return fallback_svg
-        url = QUrl.fromLocalFile(image_path).toString()
-        return (
-            '<img src="{0}" style="display:block;width:100%;max-width:1700px;'
-            'height:auto;border:1px solid '
-            '#2d3757;border-radius:6px;background:#12151e;">'
-        ).format(url)
+        img_style = (
+            'display:block;width:100%;max-width:1700px;height:auto;'
+            'border:1px solid #2d3757;border-radius:6px;background:#12151e;'
+        )
+        if image_path:
+            url = QUrl.fromLocalFile(image_path).toString()
+        elif fallback_svg:
+            # PNG conversion failed: fall back to the SVG itself as a data
+            # URI image rather than pasting raw <svg> markup into the
+            # results HTML — QTextBrowser (used whenever QtWebEngine isn't
+            # available) cannot render an inline <svg> tag at all, so the
+            # chart would otherwise simply vanish instead of degrading.
+            import base64
+
+            encoded = base64.b64encode(
+                fallback_svg.encode("utf-8")
+            ).decode("ascii")
+            url = f"data:image/svg+xml;base64,{encoded}"
+        else:
+            return ""
+        return '<img src="{0}" style="{1}">'.format(url, img_style)
 
     def _svg_to_png(self, svg_content, name):
         if not svg_content:
@@ -285,7 +380,14 @@ class ProfiliSezioniComuniPlugin:
             layer_name = (
                 layer.name().lower().replace(" ", "_").replace("—", "_")
             )
-            try:
+            # writeAsVectorFormatV3/V2 (modern QGIS) vs. writeAsVectorFormat
+            # (older API, removed in recent QGIS): resolved once via getattr
+            # so a real error raised *while writing* is never mistaken for
+            # "this API doesn't exist on this QGIS version".
+            writer = getattr(
+                QgsVectorFileWriter, "writeAsVectorFormatV3", None
+            ) or getattr(QgsVectorFileWriter, "writeAsVectorFormatV2", None)
+            if writer is not None:
                 options = QgsVectorFileWriter.SaveVectorOptions()
                 options.driverName = "GPKG"
                 options.fileEncoding = "UTF-8"
@@ -299,13 +401,6 @@ class ProfiliSezioniComuniPlugin:
                     options.actionOnExistingFile = (
                         QgsVectorFileWriter
                         .ActionOnExistingFile.CreateOrOverwriteLayer
-                    )
-                writer = getattr(
-                    QgsVectorFileWriter, "writeAsVectorFormatV3", None
-                )
-                if writer is None:
-                    writer = getattr(
-                        QgsVectorFileWriter, "writeAsVectorFormatV2"
                     )
                 result = writer(
                     layer,
@@ -321,7 +416,7 @@ class ProfiliSezioniComuniPlugin:
                         else str(err_code)
                     )
                     raise RuntimeError(msg)
-            except AttributeError:
+            else:
                 err = QgsVectorFileWriter.writeAsVectorFormat(
                     layer,
                     gpkg_path,
@@ -352,7 +447,12 @@ class ProfiliSezioniComuniPlugin:
         return self.last_vector_gpkg
 
     def _enable_labels(
-        self, layer, field_name="label", color="#f1f5f9", size=8
+        self,
+        layer,
+        field_name="label",
+        color="#f1f5f9",
+        size=8,
+        min_label_scale=None,
     ):
         try:
             from qgis.PyQt.QtGui import QColor
@@ -374,13 +474,24 @@ class ProfiliSezioniComuniPlugin:
             buffer.setColor(QColor("#12151e"))
             fmt.setBuffer(buffer)
             settings.setFormat(fmt)
+            if min_label_scale:
+                # Dense per-feature labels (pickets, section markers) turn
+                # into unreadable clutter once zoomed out over a long
+                # alignment. Only show them once zoomed in past this scale
+                # denominator; the map still shows the features themselves
+                # at any zoom, just without labels.
+                settings.scaleVisibility = True
+                settings.minimumScale = min_label_scale
+                settings.maximumScale = 0
             layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
             layer.setLabelsEnabled(True)
             layer.triggerRepaint()
         except Exception:  # nosec B110
             pass
 
-    def _style_line_layer(self, layer, color, width=0.7, label_field=None):
+    def _style_line_layer(
+        self, layer, color, width=0.7, label_field=None, min_label_scale=None
+    ):
         try:
             from qgis.core import QgsLineSymbol, QgsSingleSymbolRenderer
 
@@ -392,12 +503,21 @@ class ProfiliSezioniComuniPlugin:
             )
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
             if label_field:
-                self._enable_labels(layer, label_field)
+                self._enable_labels(
+                    layer, label_field, min_label_scale=min_label_scale
+                )
             layer.triggerRepaint()
         except Exception:  # nosec B110
             pass
 
-    def _style_marker_layer(self, layer, color, size=2.2, label_field=None):
+    def _style_marker_layer(
+        self,
+        layer,
+        color,
+        size=2.2,
+        label_field=None,
+        min_label_scale=None,
+    ):
         try:
             from qgis.core import QgsMarkerSymbol, QgsSingleSymbolRenderer
 
@@ -412,7 +532,9 @@ class ProfiliSezioniComuniPlugin:
             )
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
             if label_field:
-                self._enable_labels(layer, label_field)
+                self._enable_labels(
+                    layer, label_field, min_label_scale=min_label_scale
+                )
             layer.triggerRepaint()
         except Exception:  # nosec B110
             pass
@@ -522,7 +644,13 @@ class ProfiliSezioniComuniPlugin:
             pc_layer = QgsPointCloudLayer(
                 path, f"{name_prefix}_pointcloud_{stamp}", "pdal"
             )
-        except Exception:
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"Point cloud layer non caricato (provider PDAL assente o "
+                f"file non valido): {exc}",
+                "Profili, Sezioni e Comuni",
+                Qgis.MessageLevel.Info,
+            )
             pc_layer = None
 
         if pc_layer is not None and pc_layer.isValid():
@@ -868,6 +996,9 @@ class ProfiliSezioniComuniPlugin:
             )
             # Tab Download Raster
             self.dialog.btn_draw_area.clicked.connect(self._start_area_drawing)
+            self.dialog.btn_draw_area_polygon.clicked.connect(
+                self._start_area_drawing_polygon
+            )
             self.dialog.btn_browse_download_output.clicked.connect(
                 self._browse_download_output
             )
@@ -916,6 +1047,9 @@ class ProfiliSezioniComuniPlugin:
         if not self.area_tool:
             self.area_tool = DrawRectangleAreaTool(self.iface.mapCanvas())
             self.area_tool.areaDrawn.connect(self._on_area_drawn)
+            self.area_tool.drawingCancelled.connect(
+                self._on_drawing_cancelled
+            )
         self.iface.mapCanvas().setMapTool(self.area_tool)
         self._push(
             "Download raster",
@@ -923,8 +1057,32 @@ class ProfiliSezioniComuniPlugin:
             "drag a rectangle.",
         )
 
+    def _start_area_drawing_polygon(self):
+        """Activate the free-hand polygon tool for raster downloads: the
+        raster is then clipped to the exact drawn shape, not just its
+        bounding box."""
+        self.dialog.hide()
+        if not self.area_tool_polygon:
+            self.area_tool_polygon = DrawPolygonAreaTool(
+                self.iface.mapCanvas()
+            )
+            self.area_tool_polygon.areaDrawn.connect(self._on_area_drawn)
+            self.area_tool_polygon.drawingCancelled.connect(
+                self._on_drawing_cancelled
+            )
+        self.iface.mapCanvas().setMapTool(self.area_tool_polygon)
+        self._push(
+            "Download raster",
+            "Clicca per aggiungere vertici, doppio click per chiudere il "
+            "poligono. / Click to add vertices, double-click to close the "
+            "polygon.",
+        )
+
     def _on_area_drawn(self, points):
-        self.iface.mapCanvas().unsetMapTool(self.area_tool)
+        canvas = self.iface.mapCanvas()
+        tool = self.sender()
+        if tool is not None and canvas.mapTool() is tool:
+            canvas.unsetMapTool(tool)
         self.dialog.show()
         try:
             rect = bbox_wgs84_from_points(points)
@@ -956,7 +1114,13 @@ class ProfiliSezioniComuniPlugin:
     def _add_tinitaly_wcs(self):
         try:
             layer = tinitaly_wcs_layer()
-            QgsProject.instance().addMapLayer(layer)
+            project = QgsProject.instance()
+            # addMapLayer() would insert it at the top of the layer tree
+            # (QGIS default), covering any profile/section vector layers
+            # already drawn. Add it without a legend entry, then append it
+            # at the bottom ourselves so it renders underneath them.
+            project.addMapLayer(layer, False)
+            project.layerTreeRoot().addLayer(layer)
             self._push(
                 "TINITALY",
                 "WCS TINITALY caricato / TINITALY WCS loaded.",
@@ -980,6 +1144,14 @@ class ProfiliSezioniComuniPlugin:
             )
 
     def _download_raster_area(self):
+        if self._busy:
+            self._push(
+                "Errore / Error",
+                "Un'altra operazione e' gia' in corso / Another operation "
+                "is already running.",
+                "Warning",
+            )
+            return
         area_points = self.dialog._download_area_points
         if not area_points:
             self._push(
@@ -1023,6 +1195,11 @@ class ProfiliSezioniComuniPlugin:
         self.dialog.lbl_download_status.setText(
             "Download/ritaglio in corso..."
         )
+        # Disabled for the duration: QApplication.processEvents() below pumps
+        # the event loop, so a second click here would re-enter this method
+        # while GDAL/urllib handles from the first call are still open.
+        self.dialog.btn_download_raster.setEnabled(False)
+        self._busy = True
         QApplication.processEvents()
         try:
             final_path, rect, layer = download_raster_area(
@@ -1034,7 +1211,7 @@ class ProfiliSezioniComuniPlugin:
             )
             if layer and layer.isValid():
                 group = self._new_output_group(
-                    "Raster download / Downloaded raster"
+                    "Raster download / Downloaded raster", is_raster=True
                 )
                 self._add_output_layer(layer, group, "GeoTIFF")
             layer_msg = (
@@ -1053,8 +1230,12 @@ class ProfiliSezioniComuniPlugin:
             QMessageBox.critical(self.dialog, "Download raster", str(e))
             self.dialog.lbl_download_status.setText(f"Errore / Error: {e}")
         finally:
+            self._busy = False
             self.dialog.progress.setVisible(False)
             self.dialog.progress.setRange(0, 0)
+            self.dialog.btn_download_raster.setEnabled(
+                bool(self.dialog._download_area_points)
+            )
 
     # ──────────────────────────────────────────────────────────────
     # Confronto prima/dopo — before/after comparison
@@ -1072,6 +1253,14 @@ class ProfiliSezioniComuniPlugin:
             self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
 
     def _run_gpkg_compare(self):
+        if self._busy:
+            self._push(
+                "Confronto / Comparison",
+                "Un'altra operazione e' gia' in corso / Another operation "
+                "is already running.",
+                "Warning",
+            )
+            return
         path_before, path_after = self.dialog.get_confronto_gpkg_paths()
         if not path_before or not path_after:
             self._push(
@@ -1094,6 +1283,8 @@ class ProfiliSezioniComuniPlugin:
             "Confronto in corso... / Comparing..."
         )
         self.dialog.progress.setVisible(True)
+        self.dialog.btn_compare_gpkg.setEnabled(False)
+        self._busy = True
         QApplication.processEvents()
         try:
             before = read_gpkg_summary(path_before)
@@ -1115,7 +1306,7 @@ class ProfiliSezioniComuniPlugin:
                 result, self.dialog.lang, chart_html
             )
             self.last_results_html = results_html
-            self.dialog.show_results(results_html)
+            self.dialog.show_results(results_html, "confronto")
             self.dialog.lbl_confronto_status.setText(
                 "Confronto GeoPackage completato / GeoPackage comparison done."
             )
@@ -1127,9 +1318,19 @@ class ProfiliSezioniComuniPlugin:
             self._push("Confronto / Comparison", str(e), "Critical")
             self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
         finally:
+            self._busy = False
             self.dialog.progress.setVisible(False)
+            self.dialog.btn_compare_gpkg.setEnabled(True)
 
     def _run_dtm_compare(self):
+        if self._busy:
+            self._push(
+                "Confronto DTM / DTM comparison",
+                "Un'altra operazione e' gia' in corso / Another operation "
+                "is already running.",
+                "Warning",
+            )
+            return
         path_before, path_after = self.dialog.get_confronto_dtm_paths()
         if not path_before or not path_after:
             self._push(
@@ -1157,6 +1358,8 @@ class ProfiliSezioniComuniPlugin:
         self.dialog.lbl_confronto_status.setText(
             "Calcolo differenza DTM... / Computing DTM difference..."
         )
+        self.dialog.btn_compare_dtm.setEnabled(False)
+        self._busy = True
         QApplication.processEvents()
 
         def _progress(percent=0, message="", **kwargs):
@@ -1175,7 +1378,7 @@ class ProfiliSezioniComuniPlugin:
                 layer = self._load_diff_raster(result)
                 if layer:
                     group = self._new_output_group(
-                        "Confronto DTM / DTM comparison"
+                        "Confronto DTM / DTM comparison", is_raster=True
                     )
                     self._add_output_layer(
                         layer, group, "Differenza / Difference"
@@ -1185,7 +1388,7 @@ class ProfiliSezioniComuniPlugin:
                 result, path_before, path_after, self.dialog.lang
             )
             self.last_results_html = results_html
-            self.dialog.show_results(results_html)
+            self.dialog.show_results(results_html, "confronto")
             self.dialog.lbl_confronto_status.setText(
                 f"Raster differenza salvato / Difference raster saved: "
                 f"{result['diff_path']}"
@@ -1202,8 +1405,10 @@ class ProfiliSezioniComuniPlugin:
             )
             self.dialog.lbl_confronto_status.setText(f"Errore / Error: {e}")
         finally:
+            self._busy = False
             self.dialog.progress.setVisible(False)
             self.dialog.progress.setRange(0, 0)
+            self.dialog.btn_compare_dtm.setEnabled(True)
 
     def _load_diff_raster(self, result):
         """Load the DoD raster with a diverging ramp: red=cut, blue=fill."""
@@ -1229,14 +1434,7 @@ class ProfiliSezioniComuniPlugin:
             )
             threshold = result.get("threshold_m") or 0.05
             shader_fn = QgsColorRampShader()
-            try:
-                shader_fn.setColorRampType(
-                    QgsColorRampShader.Type.Interpolated
-                )
-            except AttributeError:
-                shader_fn.setColorRampType(
-                    QgsColorRampShader.Type.Interpolated
-                )
+            shader_fn.setColorRampType(QgsColorRampShader.Type.Interpolated)
             items = [
                 QgsColorRampShader.ColorRampItem(
                     -abs_max, QColor("#67001f"), f"{-abs_max:.2f} m"
@@ -1284,6 +1482,7 @@ class ProfiliSezioniComuniPlugin:
     def _start_drawing(self, mode):
         """Activate the polyline drawing map tool."""
         self.current_mode = mode
+        express_raster = None
 
         if mode == "sections":
             raster = self.dialog.get_selected_raster(for_sezioni=True)
@@ -1295,6 +1494,7 @@ class ProfiliSezioniComuniPlugin:
                     "Critical",
                 )
                 return
+            express_raster = raster
 
         if mode == "profile":
             source = self.dialog.cb_source.currentData()
@@ -1308,12 +1508,33 @@ class ProfiliSezioniComuniPlugin:
                         "Critical",
                     )
                     return
+                express_raster = raster
+
+        self._profilo_express_raster = None
+        if self.dialog.chk_profilo_express.isChecked():
+            if express_raster is not None:
+                self._profilo_express_raster = express_raster
+            else:
+                self._push(
+                    "ProfiloExpress",
+                    "Richiede un raster locale come sorgente, non "
+                    "disponibile per le sorgenti online / Requires a "
+                    "local raster source, not available for online "
+                    "sources.",
+                    "Warning",
+                )
 
         self.dialog.hide()
 
         if not self.map_tool:
             self.map_tool = DrawPolylineTool(self.iface.mapCanvas())
             self.map_tool.lineDrawn.connect(self._on_line_drawn)
+            self.map_tool.previewChanged.connect(
+                self._on_profilo_express_preview
+            )
+            self.map_tool.drawingCancelled.connect(
+                self._on_drawing_cancelled
+            )
 
         self.iface.mapCanvas().setMapTool(self.map_tool)
         self._push(
@@ -1323,12 +1544,87 @@ class ProfiliSezioniComuniPlugin:
         )
 
     # ──────────────────────────────────────────────────────────────
+    # ProfiloExpress — live profile preview while drawing
+    # ──────────────────────────────────────────────────────────────
+
+    def _ensure_profilo_express_preview(self):
+        if self._profilo_express_preview is None:
+            from qgis.PyQt.QtWidgets import QDialog, QLabel, QVBoxLayout
+
+            dlg = QDialog(self.iface.mainWindow())
+            dlg.setWindowTitle("ProfiloExpress")
+            dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.Tool)
+            layout = QVBoxLayout(dlg)
+            label = QLabel()
+            layout.addWidget(label)
+            dlg._preview_label = label
+            self._profilo_express_preview = dlg
+        return self._profilo_express_preview
+
+    def _hide_profilo_express_preview(self):
+        if self._profilo_express_preview is not None:
+            self._profilo_express_preview.hide()
+
+    def _on_drawing_cancelled(self):
+        """User right-clicked to cancel, or the tool got deactivated, while
+        drawing was in progress: close any live preview and bring our
+        dialog back so it doesn't just vanish with no way back short of
+        re-clicking the toolbar icon."""
+        self._hide_profilo_express_preview()
+        if self.dialog is not None:
+            self.dialog.show()
+            self.dialog.raise_()
+
+    def _svg_to_pixmap(self, svg_content):
+        from qgis.PyQt.QtCore import QByteArray
+        from qgis.PyQt.QtGui import QColor, QImage, QPainter, QPixmap
+        from qgis.PyQt.QtSvg import QSvgRenderer
+
+        renderer = QSvgRenderer(QByteArray(svg_content.encode("utf-8")))
+        if not renderer.isValid():
+            return None
+        size = renderer.defaultSize()
+        if size.isEmpty():
+            return None
+        image = QImage(size, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#12151e"))
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(painter)
+        painter.end()
+        return QPixmap.fromImage(image)
+
+    def _on_profilo_express_preview(self, points):
+        """Fired on every DrawPolylineTool preview tick. Cheap no-op when
+        ProfiloExpress isn't active for the current draw session; must
+        never raise, since it runs on ordinary mouse movement."""
+        raster = self._profilo_express_raster
+        if raster is None or len(points) < 2:
+            return
+        try:
+            points_data, total_dist = calculate_profile(
+                points, "raster", raster, sample_count=40
+            )
+            svg = generate_quick_profile_svg(points_data, total_dist)
+            pixmap = self._svg_to_pixmap(svg)
+            if pixmap is None:
+                return
+            dlg = self._ensure_profilo_express_preview()
+            dlg._preview_label.setPixmap(pixmap)
+            dlg.adjustSize()
+            if not dlg.isVisible():
+                dlg.show()
+        except Exception:  # nosec B110 - best-effort live preview
+            pass
+
+    # ──────────────────────────────────────────────────────────────
     # Callback from map tool
     # ──────────────────────────────────────────────────────────────
 
     def _on_line_drawn(self, points):
         self.iface.mapCanvas().unsetMapTool(self.map_tool)
         self._last_drawn_points = points
+        self._hide_profilo_express_preview()
 
         self.dialog.lbl_status.setText("Calcolo in corso... / Computing...")
         self.dialog.progress.setVisible(True)
@@ -1416,6 +1712,14 @@ class ProfiliSezioniComuniPlugin:
         self.last_chart_png_path = chart_path
         chart_html = self._chart_image_html(chart_path, svg)
 
+        svg_pegstyle = generate_profile_svg_pegstyle(
+            points_data, total_dist, labels
+        )
+        chart_path_pegstyle = self._svg_to_png(svg_pegstyle, "profilo_pegstyle")
+        chart_html_pegstyle = self._chart_image_html(
+            chart_path_pegstyle, svg_pegstyle
+        )
+
         results_html = generate_profile_results_html(
             points_data,
             total_dist,
@@ -1424,6 +1728,8 @@ class ProfiliSezioniComuniPlugin:
             svg,
             labels,
             chart_html,
+            svg_pegstyle,
+            chart_html_pegstyle,
         )
         self.last_results_html = results_html
         vector_layers = self._create_profile_vector_layers(
@@ -1448,7 +1754,7 @@ class ProfiliSezioniComuniPlugin:
                 f"GeoPackage non creato / not created: {e}",
                 "Warning",
             )
-        self.dialog.show_results(results_html)
+        self.dialog.show_results(results_html, "profilo")
 
         dist_label = (
             f"{total_dist / 1000:.3f} km"
@@ -1551,12 +1857,9 @@ class ProfiliSezioniComuniPlugin:
             "memory",
         )
         crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
-        try:
-            xform = QgsCoordinateTransform(
-                crs_wgs, project.crs(), project.transformContext()
-            )
-        except Exception:
-            xform = QgsCoordinateTransform(crs_wgs, project.crs(), project)
+        xform = QgsCoordinateTransform(
+            crs_wgs, project.crs(), project.transformContext()
+        )
         feats = []
         for p in pickets:
             pt = xform.transform(QgsPointXY(p.get("lon", 0), p.get("lat", 0)))
@@ -1584,7 +1887,13 @@ class ProfiliSezioniComuniPlugin:
         if feats:
             pickets_layer.dataProvider().addFeatures(feats)
             pickets_layer.updateExtents()
-            self._style_marker_layer(pickets_layer, "#ffffff", 2.5, "label")
+            self._style_marker_layer(
+                pickets_layer,
+                "#ffffff",
+                2.5,
+                "label",
+                min_label_scale=self.DENSE_LABEL_MIN_SCALE,
+            )
             self._add_output_layer(
                 pickets_layer, group, "03 Picchetti / Pickets"
             )
@@ -1768,7 +2077,7 @@ class ProfiliSezioniComuniPlugin:
                 f"GeoPackage non creato / not created: {e}",
                 "Warning",
             )
-        self.dialog.show_results(results_html)
+        self.dialog.show_results(results_html, "sezioni")
 
         self.dialog.lbl_status.setText(
             f"Sezioni calcolate / Sections calculated — "
@@ -1915,14 +2224,9 @@ class ProfiliSezioniComuniPlugin:
         layers.append(vl_asse)
 
         crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
-        try:
-            xform_from_wgs = QgsCoordinateTransform(
-                crs_wgs, project.crs(), project.transformContext()
-            )
-        except Exception:
-            xform_from_wgs = QgsCoordinateTransform(
-                crs_wgs, project.crs(), project
-            )
+        xform_from_wgs = QgsCoordinateTransform(
+            crs_wgs, project.crs(), project.transformContext()
+        )
 
         # Curve points
         curves = data.get("curve_points", [])
@@ -2070,7 +2374,13 @@ class ProfiliSezioniComuniPlugin:
         if feats_sez:
             pr_sez.addFeatures(feats_sez)
             vl_sez.updateExtents()
-            self._style_line_layer(vl_sez, "#4f73c4", 0.65, "label")
+            self._style_line_layer(
+                vl_sez,
+                "#4f73c4",
+                0.65,
+                "label",
+                min_label_scale=self.DENSE_LABEL_MIN_SCALE,
+            )
             self._add_output_layer(
                 vl_sez,
                 group,
@@ -2088,7 +2398,13 @@ class ProfiliSezioniComuniPlugin:
         if feats_centers:
             pr_centers.addFeatures(feats_centers)
             vl_centers.updateExtents()
-            self._style_marker_layer(vl_centers, "#ffffff", 2.6, "label")
+            self._style_marker_layer(
+                vl_centers,
+                "#ffffff",
+                2.6,
+                "label",
+                min_label_scale=self.DENSE_LABEL_MIN_SCALE,
+            )
             self._add_output_layer(
                 vl_centers, group, "04 Centri sezione / Section centers"
             )
@@ -2706,8 +3022,6 @@ class ProfiliSezioniComuniPlugin:
 
     @staticmethod
     def _nice_grid_interval(span):
-        import math
-
         raw = max(span / 5.0, 1e-9)
         magnitude = 10 ** math.floor(math.log10(raw))
         for mult in (1, 2, 5, 10):
@@ -2738,11 +3052,23 @@ class ProfiliSezioniComuniPlugin:
             QgsLayoutItemPicture,
             QgsLayoutItemScaleBar,
             QgsLayoutItemShape,
+            QgsLayoutMeasurement,
             QgsLayoutPoint,
             QgsLayoutSize,
             QgsPrintLayout,
             QgsUnitTypes,
         )
+
+        # Shared palette matching the plugin's own "SPATIQON" dark chart
+        # style (core_elevation.py / core_sections.py SVG generators), so
+        # the printed layout's chrome (title block, frames, accents) reads
+        # as one coherent product with the on-screen charts.
+        PANEL_BG = QColor("#12151e")
+        PANEL_BORDER = QColor("#2d3757")
+        ACCENT = QColor("#4f73c4")
+        TEXT_LIGHT = QColor("#f1f5f9")
+        TEXT_MUTED = QColor("#8ba3c7")
+        TEXT_DIM = QColor("#566584")
 
         project = QgsProject.instance()
         mm = QgsUnitTypes.LayoutUnit.LayoutMillimeters
@@ -2768,6 +3094,14 @@ class ProfiliSezioniComuniPlugin:
         map_item.setExtent(extent)
         layout.addLayoutItem(map_item)
         try:
+            map_item.setFrameEnabled(True)
+            map_item.setFrameStrokeColor(QColor("#2d3757"))
+            map_item.setFrameStrokeWidth(
+                QgsLayoutMeasurement(0.5, QgsUnitTypes.LayoutUnit.LayoutMillimeters)
+            )
+        except Exception:  # nosec B110
+            pass
+        try:
             layout.setReferenceMap(map_item)
         except Exception:  # nosec B110
             pass
@@ -2783,14 +3117,8 @@ class ProfiliSezioniComuniPlugin:
             )
             grid.setIntervalX(interval)
             grid.setIntervalY(interval)
-            try:
-                grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
-            except AttributeError:
-                grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
-            try:
-                grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
-            except AttributeError:
-                grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
+            grid.setStyle(QgsLayoutItemMapGrid.GridStyle.Solid)
+            grid.setFrameStyle(QgsLayoutItemMapGrid.FrameStyle.Zebra)
             grid.setFrameWidth(2.0)
             grid.setAnnotationEnabled(True)
             grid.setAnnotationPrecision(
@@ -2825,12 +3153,34 @@ class ProfiliSezioniComuniPlugin:
         except Exception:  # nosec B110
             pass
 
+        # ── North arrow (QGIS's own built-in SVG, same one the Layout
+        # Designer's "Add North Arrow" toolbar button inserts) ──
+        try:
+            from qgis.PyQt.QtCore import QFile
+
+            arrow_svg = ":/images/north_arrows/layout_default_north_arrow.svg"
+            if QFile(arrow_svg).exists():
+                arrow = QgsLayoutItemPicture(layout)
+                arrow.setPicturePath(arrow_svg)
+                layout.addLayoutItem(arrow)
+                arrow.attemptResize(QgsLayoutSize(12, 16, mm))
+                arrow.attemptMove(QgsLayoutPoint(278, 14, mm))
+        except Exception:  # nosec B110
+            pass
+
         # ── Legend: each typology once ──
         try:
             legend = QgsLayoutItemLegend(layout)
             legend.setTitle("Legenda / Legend")
             legend.setLinkedMap(map_item)
             legend.setAutoUpdateModel(False)
+            try:
+                legend.setBackgroundEnabled(True)
+                legend.setBackgroundColor(QColor(255, 255, 255, 235))
+                legend.setFrameEnabled(True)
+                legend.setFrameStrokeColor(PANEL_BORDER)
+            except Exception:  # nosec B110
+                pass
             root = legend.model().rootGroup()
             try:
                 root.removeAllChildren()
@@ -2853,35 +3203,92 @@ class ProfiliSezioniComuniPlugin:
         # ── Title block (cartiglio) with small charts ──
         charts = self._collect_print_charts()
         try:
-            try:
-                shape_type = QgsLayoutItemShape.Shape.Rectangle
-            except AttributeError:
-                shape_type = QgsLayoutItemShape.Shape.Rectangle
+            shape_type = QgsLayoutItemShape.Shape.Rectangle
             cartiglio = QgsLayoutItemShape(layout)
             cartiglio.setShapeType(shape_type)
             layout.addLayoutItem(cartiglio)
             cartiglio.attemptMove(QgsLayoutPoint(10, 240, mm))
             cartiglio.attemptResize(QgsLayoutSize(400, 50, mm))
+            from qgis.core import QgsFillSymbol
+
+            cartiglio.setSymbol(
+                QgsFillSymbol.createSimple(
+                    {
+                        "color": "18,21,30,255",
+                        "outline_color": "45,55,87,255",
+                        "outline_width": "0.3",
+                    }
+                )
+            )
         except Exception:  # nosec B110
             pass
 
-        def _label(text, x, y, w, h, size=10, bold=False):
+        # Thin accent rule separating the title from the metadata rows,
+        # same accent blue used throughout the plugin's own chart style.
+        try:
+            rule = QgsLayoutItemShape(layout)
+            rule.setShapeType(QgsLayoutItemShape.Shape.Rectangle)
+            layout.addLayoutItem(rule)
+            rule.attemptMove(QgsLayoutPoint(14, 255.5, mm))
+            rule.attemptResize(QgsLayoutSize(186, 0.6, mm))
+            rule.setSymbol(
+                QgsFillSymbol.createSimple(
+                    {"color": "79,115,196,255", "outline_style": "no"}
+                )
+            )
+        except Exception:  # nosec B110
+            pass
+
+        # Plugin icon in the top-left corner of the title block.
+        try:
+            logo = QgsLayoutItemPicture(layout)
+            logo.setPicturePath(os.path.join(self.plugin_dir, "icon.svg"))
+            layout.addLayoutItem(logo)
+            logo.attemptResize(QgsLayoutSize(12, 12, mm))
+            logo.attemptMove(QgsLayoutPoint(14, 243, mm))
+        except Exception:  # nosec B110
+            pass
+
+        def _label(
+            text,
+            x,
+            y,
+            w,
+            h,
+            size=10,
+            bold=False,
+            color=None,
+            italic=False,
+            page=None,
+        ):
             item = QgsLayoutItemLabel(layout)
             item.setText(text)
             font = QFont("Arial", size)
             font.setBold(bold)
+            font.setItalic(italic)
             try:
-                item.setFont(font)
+                fmt = item.textFormat()
+                fmt.setFont(font)
+                fmt.setSize(size)
+                if color is not None:
+                    fmt.setColor(color)
+                item.setTextFormat(fmt)
             except Exception:
                 try:
-                    fmt = item.textFormat()
-                    fmt.setFont(font)
-                    fmt.setSize(size)
-                    item.setTextFormat(fmt)
+                    item.setFont(font)
                 except Exception:  # nosec B110
                     pass
             layout.addLayoutItem(item)
-            item.attemptMove(QgsLayoutPoint(x, y, mm))
+            # Items destined for a page other than the first must get their
+            # target page in this SAME attemptMove call: moving them once
+            # without a page (implicitly landing on page 0) and only then
+            # re-moving them onto the right page is fragile — some QGIS
+            # versions leave the item attached to whichever page it first
+            # landed on for layout/bounding-rect purposes.
+            if page is not None:
+                item.attemptMove(QgsLayoutPoint(x, y, mm), True, False, page)
+            else:
+                item.attemptMove(QgsLayoutPoint(x, y, mm))
             item.attemptResize(QgsLayoutSize(w, h, mm))
             return item
 
@@ -2895,32 +3302,46 @@ class ProfiliSezioniComuniPlugin:
             scale_txt = f"1:{int(round(map_item.scale())):,}".replace(",", ".")
         except Exception:
             scale_txt = "n/d"
-        _label(title, 14, 243, 170, 9, size=14, bold=True)
+        _label(
+            title, 30, 244, 170, 9, size=15, bold=True, color=TEXT_LIGHT
+        )
         _label(
             "Profili, Sezioni e Comuni — Dott. Sarino Alfonso Grande",
             14,
-            253,
-            170,
+            257,
+            186,
             6,
             size=9,
+            color=TEXT_MUTED,
         )
-        _label(f"Data / Date: {created}", 14, 260, 170, 6, size=9)
+        _label(
+            f"Data / Date: {created}",
+            14,
+            263,
+            186,
+            6,
+            size=9,
+            color=TEXT_MUTED,
+        )
         _label(
             f"CRS: {project.crs().authid()}   ·   Scala / Scale: {scale_txt}",
             14,
-            267,
-            170,
+            269,
+            186,
             6,
             size=9,
+            color=TEXT_MUTED,
         )
         _label(
             "Quote indicative — non idonee a progettazione strutturale / "
             "Indicative elevations — not for structural design",
             14,
-            274,
+            276,
             190,
             10,
-            size=8,
+            size=7.5,
+            italic=True,
+            color=TEXT_DIM,
         )
 
         # small chart thumbnails inside the title block
@@ -2930,10 +3351,7 @@ class ProfiliSezioniComuniPlugin:
                 svg_path = self._write_chart_svg(chart["svg"], "cartiglio")
                 thumb = QgsLayoutItemPicture(layout)
                 thumb.setPicturePath(svg_path)
-                try:
-                    thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
-                except AttributeError:
-                    thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
+                thumb.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(thumb)
                 thumb.attemptMove(QgsLayoutPoint(thumb_x, 242, mm))
                 thumb.attemptResize(QgsLayoutSize(96, 46, mm))
@@ -2947,15 +3365,40 @@ class ProfiliSezioniComuniPlugin:
                 extra_page = QgsLayoutItemPage(layout)
                 extra_page.setPageSize(QgsLayoutSize(420, 297, mm))
                 layout.pageCollection().addPage(extra_page)
-            except Exception:
-                break
+            except Exception as exc:
+                QgsMessageLog.logMessage(
+                    f"Pagina layout saltata per '{chart.get('title')}': "
+                    f"{exc}",
+                    "Profili, Sezioni e Comuni",
+                    Qgis.MessageLevel.Warning,
+                )
+                continue
 
-            title_item = _label(
-                chart["title"], 10, 10, 400, 10, size=14, bold=True
+            _label(
+                chart["title"],
+                10,
+                10,
+                400,
+                10,
+                size=14,
+                bold=True,
+                page=page_idx,
             )
+
             try:
-                title_item.attemptMove(
-                    QgsLayoutPoint(10, 10, mm), True, False, page_idx
+                from qgis.core import QgsFillSymbol
+
+                header_rule = QgsLayoutItemShape(layout)
+                header_rule.setShapeType(QgsLayoutItemShape.Shape.Rectangle)
+                layout.addLayoutItem(header_rule)
+                header_rule.attemptResize(QgsLayoutSize(400, 0.6, mm))
+                header_rule.attemptMove(
+                    QgsLayoutPoint(10, 20.5, mm), True, False, page_idx
+                )
+                header_rule.setSymbol(
+                    QgsFillSymbol.createSimple(
+                        {"color": "79,115,196,255", "outline_style": "no"}
+                    )
                 )
             except Exception:  # nosec B110
                 pass
@@ -2964,10 +3407,7 @@ class ProfiliSezioniComuniPlugin:
                 svg_path = self._write_chart_svg(chart["svg"], "foglio")
                 pic = QgsLayoutItemPicture(layout)
                 pic.setPicturePath(svg_path)
-                try:
-                    pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
-                except AttributeError:
-                    pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
+                pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(pic)
                 pic.attemptMove(
                     QgsLayoutPoint(10, 22, mm), True, False, page_idx
@@ -3008,6 +3448,18 @@ class ProfiliSezioniComuniPlugin:
                     table_x += table_w + 6
                 except Exception:  # nosec B110
                     pass
+
+            _label(
+                f"Foglio {page_idx + 1}/{len(charts) + 1} — {title} — "
+                f"{created}",
+                10,
+                289,
+                400,
+                6,
+                size=8,
+                color=TEXT_DIM,
+                page=page_idx,
+            )
 
         return layout
 
@@ -3141,9 +3593,19 @@ class ProfiliSezioniComuniPlugin:
             else "Elevation Profile / Profilo Altimetrico"
         )
         project = QgsProject.instance()
-        for layout in project.layoutManager().printLayouts():
-            if layout.name() == layout_name:
-                project.layoutManager().removeLayout(layout)
+        for old_layout in project.layoutManager().printLayouts():
+            if old_layout.name() != layout_name:
+                continue
+            # Close any open designer window for it first: removing the
+            # QgsPrintLayout while its QgsLayoutDesignerDialog is still
+            # open leaves that window holding a pointer to a deleted C++
+            # object, which crashes QGIS the next time it's touched (or
+            # on QGIS shutdown). This is hit on ordinary repeated use of
+            # "Stampa" (print), not just a race condition.
+            for designer in self.iface.layoutDesigners():
+                if designer.layout() is old_layout:
+                    designer.close()
+            project.layoutManager().removeLayout(old_layout)
 
         layout = self._build_cartographic_layout(layout_name, points)
         project.layoutManager().addLayout(layout)

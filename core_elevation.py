@@ -27,6 +27,8 @@ Public API:
   (points_data, total_dist)
   build_pickets(points, total_m) -> list
   generate_profile_svg(points, total_m, source, raster_name, labels) -> str
+  generate_profile_svg_pegstyle(points, total_m, labels) -> str
+  generate_quick_profile_svg(points, total_m) -> str
   generate_profile_html(points, total_m, source, raster_name) -> str
   export_profile_csv(points, filepath)
 """
@@ -149,16 +151,11 @@ def _build_samples(line_points, sample_count):
         raise ValueError("The drawn line has zero length.")
 
     crs_wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-    try:
-        xform = QgsCoordinateTransform(
-            QgsProject.instance().crs(),
-            crs_wgs84,
-            QgsProject.instance().transformContext(),
-        )
-    except Exception:
-        xform = QgsCoordinateTransform(
-            QgsProject.instance().crs(), crs_wgs84, QgsProject.instance()
-        )
+    xform = QgsCoordinateTransform(
+        QgsProject.instance().crs(),
+        crs_wgs84,
+        QgsProject.instance().transformContext(),
+    )
 
     step = total_dist / max(1, sample_count - 1)
     samples = []
@@ -281,16 +278,11 @@ def calculate_profile(
             and raster_crs.isValid()
             and project_crs != raster_crs
         ):
-            try:
-                xform_to_raster = QgsCoordinateTransform(
-                    project_crs,
-                    raster_crs,
-                    project.transformContext(),
-                )
-            except Exception:
-                xform_to_raster = QgsCoordinateTransform(
-                    project_crs, raster_crs, project
-                )
+            xform_to_raster = QgsCoordinateTransform(
+                project_crs,
+                raster_crs,
+                project.transformContext(),
+            )
         raster_extent = raster_layer.extent()
         nodata_values = _raster_nodata_values(dp, band)
         for p in samples:
@@ -608,7 +600,7 @@ def generate_profile_svg(
     .footer {{ font: 11px Arial, sans-serif; fill:#566584; }}
   </style>
 </defs>
-<rect width="100%" height="100%" fill="#12151e"/>
+<rect width="{width}" height="{height}" fill="#12151e"/>
 <text x="70" y="48" class="title">Elevation Profile / Profilo Altimetrico</text>
 <text x="70" y="75" class="subtitle">Project: {esc(project_title)} · Distance: {esc(dist_label)} · Min {min_z:.2f} m · Max {max_z:.2f} m · {created_at}</text>
 <rect x="{chart_l}" y="{chart_t}" width="{chart_r - chart_l}" height="{chart_b - chart_t}" rx="4" class="frame"/>
@@ -617,7 +609,7 @@ def generate_profile_svg(
 {f'<path d="{fill_d}" class="profile-fill"/>' if fill_d else ''}
 {f'<path d="{line_d}" class="profile"/>' if line_d else ''}
 {''.join(picket_lines)}
-<text x="70" y="625" class="title" style="font-size:20px">Pickets /
+<text x="70" y="644" class="title" style="font-size:20px">Pickets /
 Fincatura Picchetti</text>
 <rect x="70" y="{table_t}" width="1460" height="34" fill="#1e2437"/>
 <text x="92" y="{table_t + 22}" class="thead">{esc(lbl_peg)}</text>
@@ -628,6 +620,192 @@ Fincatura Picchetti</text>
 <text x="1260" y="{table_t + 22}" class="thead">Latitude</text>
 {''.join(table_rows)}
 <text x="70" y="992" class="footer">Source: {esc(provider_name)}</text>
+</svg>
+"""
+
+
+def generate_quick_profile_svg(points, total_m):
+    """Minimal, fast profile chart for the ProfiloExpress live preview
+    shown while the polyline is still being drawn: no pickets table, no
+    project lookup, just the ground line on a small canvas so it can be
+    rebuilt on every preview tick without noticeable lag."""
+    width, height = 480, 220
+    chart_l, chart_t, chart_r, chart_b = 46, 14, 466, 190
+
+    valid = [p for p in points if p.get("elevation") is not None]
+    if not valid:
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+            f'height="{height}"><rect width="{width}" height="{height}" '
+            'fill="#12151e"/><text x="20" y="110" fill="#566584" '
+            'font-family="Arial" font-size="12">'
+            "In attesa di quote... / Waiting for elevations...</text></svg>"
+        )
+
+    min_z = float(min(p["elevation"] for p in valid))
+    max_z = float(max(p["elevation"] for p in valid))
+    z_pad = max((max_z - min_z) * 0.12, 0.5)
+    y_min, y_max = min_z - z_pad, max_z + z_pad
+    z_span = max(y_max - y_min, 1.0)
+    d_span = max(float(total_m), 1.0)
+
+    def x_of(d):
+        return chart_l + (float(d or 0) / d_span) * (chart_r - chart_l)
+
+    def y_of(z):
+        return chart_b - ((float(z) - y_min) / z_span) * (chart_b - chart_t)
+
+    path_pts = [
+        (x_of(p.get("distance_m")), y_of(p.get("elevation"))) for p in valid
+    ]
+    line_d = " ".join(
+        f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}"
+        for i, (x, y) in enumerate(path_pts)
+    )
+
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
+<rect width="{width}" height="{height}" fill="#12151e"/>
+<rect x="{chart_l}" y="{chart_t}" width="{chart_r - chart_l}" height="{chart_b - chart_t}" fill="#0e1118" stroke="#2d3757"/>
+<text x="8" y="{chart_t + 10}" fill="#8ba3c7" font-family="Arial" font-size="10">{max_z:.1f} m</text>
+<text x="8" y="{chart_b}" fill="#8ba3c7" font-family="Arial" font-size="10">{min_z:.1f} m</text>
+<text x="{chart_l}" y="{height - 4}" fill="#8ba3c7" font-family="Arial" font-size="10">ProfiloExpress — {total_m:.0f} m</text>
+<path d="{line_d}" fill="none" stroke="#4f73c4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
+"""
+
+
+def generate_profile_svg_pegstyle(points, total_m, labels=None):
+    """Alternate profile rendering in the classic surveying "picchettata"
+    style (white sheet, black ground line, grid with a chainage/elevation
+    tick band under the axis) — a look inspired by traditional topographic
+    profile plots such as the "Topographic profile" QGIS plugin, as an
+    alternative to this plugin's default SPATIQON dark chart. Same public
+    inputs as generate_profile_svg() so both can be rendered side by side
+    from the same profile data."""
+    if not points:
+        return "<svg><text x='10' y='20'>No data.</text></svg>"
+
+    valid = [p for p in points if p.get("elevation") is not None]
+    pickets = build_pickets(points, total_m)
+    labels = labels or {}
+    lbl_peg = labels.get("peg", "Picket")
+    lbl_progressive = labels.get("progressive", "Progressive m")
+    lbl_ground = labels.get("ground", "Elevation m")
+
+    width, height = 1600, 760
+    chart_l, chart_t, chart_r, chart_b = 130, 90, 1540, 520
+    band_h = 34
+
+    min_z = float(min((p["elevation"] for p in valid), default=0.0))
+    max_z = float(max((p["elevation"] for p in valid), default=1.0))
+    z_pad = max((max_z - min_z) * 0.1, 1.0)
+    y_min = min_z - z_pad
+    y_max = max_z + z_pad
+    z_span = max(y_max - y_min, 1.0)
+    d_span = max(float(total_m), 1.0)
+
+    def esc(v):
+        return _html.escape("" if v is None else str(v), quote=True)
+
+    def x_of(d):
+        return chart_l + (float(d or 0) / d_span) * (chart_r - chart_l)
+
+    def y_of(z):
+        return chart_b - ((float(z) - y_min) / z_span) * (chart_b - chart_t)
+
+    path_pts = [
+        (x_of(p.get("distance_m")), y_of(p.get("elevation"))) for p in valid
+    ]
+    line_d = " ".join(
+        f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}"
+        for i, (x, y) in enumerate(path_pts)
+    )
+
+    y_ticks = []
+    for i in range(6):
+        t = i / 5
+        z = y_min + z_span * t
+        y = y_of(z)
+        y_ticks.append(
+            f'<line x1="{chart_l}" y1="{y:.1f}" x2="{chart_r}" y2="{y:.1f}" '
+            f'class="grid"/>'
+            f'<text x="{chart_l - 12}" y="{y + 4:.1f}" '
+            f'class="axis right">{z:.2f}</text>'
+        )
+
+    x_step = _nice_step(total_m, 10)
+    x_ticks = []
+    d = 0.0
+    while d <= float(total_m) + 0.01 and len(x_ticks) < 30:
+        x = x_of(d)
+        x_ticks.append(
+            f'<line x1="{x:.1f}" y1="{chart_t}" x2="{x:.1f}" y2="{chart_b}" '
+            f'class="grid"/>'
+        )
+        d += x_step
+
+    band1_t = chart_b + 4
+    band2_t = band1_t + band_h
+    peg_cols = []
+    for p in pickets:
+        x = x_of(p.get("progressive_m"))
+        z = p.get("elevation")
+        y = y_of(z) if z is not None else chart_b
+        elev_text = "" if z is None else f"{float(z):.2f}"
+        peg_cols.append(
+            f'<line x1="{x:.1f}" y1="{chart_t}" x2="{x:.1f}" '
+            f'y2="{band2_t + band_h:.1f}" class="tick"/>'
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" class="peg-dot"/>'
+            f'<text x="{x:.1f}" y="{chart_t - 10}" '
+            f'class="peg-label">{esc(p.get("id"))}</text>'
+            f'<text x="{x:.1f}" y="{band1_t + band_h - 10:.1f}" '
+            f'class="band-label">{p.get("progressive_m", 0):.2f}</text>'
+            f'<text x="{x:.1f}" y="{band2_t + band_h - 10:.1f}" '
+            f'class="band-label">{elev_text}</text>'
+        )
+
+    dist_label = (
+        f"{total_m / 1000:.3f} km" if total_m >= 1000 else f"{total_m:.1f} m"
+    )
+    project_title = (
+        QgsProject.instance().title()
+        or QgsProject.instance().baseName()
+        or "Project"
+    )
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+<defs>
+  <style>
+    .title {{ font: 700 22px Arial, sans-serif; fill:#1a1a1a; }}
+    .subtitle {{ font: 12px Arial, sans-serif; fill:#444; }}
+    .axis {{ font: 12px Arial, sans-serif; fill:#222; }}
+    .right {{ text-anchor:end; }}
+    .grid {{ stroke:#c7c7c7; stroke-width:1; }}
+    .frame {{ fill:#ffffff; stroke:#000000; stroke-width:1.5; }}
+    .ground {{ fill:none; stroke:#000000; stroke-width:2.2; stroke-linejoin:round; }}
+    .tick {{ stroke:#8a8a8a; stroke-width:0.8; stroke-dasharray:2 3; }}
+    .peg-dot {{ fill:#ffffff; stroke:#000000; stroke-width:1.6; }}
+    .peg-label {{ font: 700 11px Arial, sans-serif; fill:#000; text-anchor:middle; }}
+    .band-label {{ font: 11px Arial, sans-serif; fill:#000; text-anchor:middle; }}
+    .band-name {{ font: 700 11px Arial, sans-serif; fill:#333; }}
+    .band {{ fill:#f2f2f2; stroke:#000000; stroke-width:1; }}
+    .footer {{ font: 11px Arial, sans-serif; fill:#555; }}
+  </style>
+</defs>
+<rect width="{width}" height="{height}" fill="#ffffff"/>
+<text x="70" y="34" class="title">{esc(lbl_ground)} — profilo picchettato / peg-style profile</text>
+<text x="70" y="56" class="subtitle">Project: {esc(project_title)} · Distance: {esc(dist_label)} · Min {min_z:.2f} m · Max {max_z:.2f} m</text>
+<rect x="{chart_l}" y="{chart_t}" width="{chart_r - chart_l}" height="{chart_b - chart_t}" class="frame"/>
+{''.join(y_ticks)}
+{''.join(x_ticks)}
+<rect x="{chart_l}" y="{band1_t}" width="{chart_r - chart_l}" height="{band_h}" class="band"/>
+<rect x="{chart_l}" y="{band2_t}" width="{chart_r - chart_l}" height="{band_h}" class="band"/>
+<text x="{chart_l - 12}" y="{band1_t + band_h - 10:.1f}" class="band-name right">{esc(lbl_progressive)}</text>
+<text x="{chart_l - 12}" y="{band2_t + band_h - 10:.1f}" class="band-name right">{esc(lbl_ground)}</text>
+{''.join(peg_cols)}
+{f'<path d="{line_d}" class="ground"/>' if line_d else ''}
+<text x="70" y="{band2_t + band_h + 26:.1f}" class="footer">{esc(lbl_peg)} count: {len(pickets)} · Style inspired by classic surveying "picchettata" profile plots (e.g. the "Topographic profile" QGIS plugin by Giulio Fattori).</text>
 </svg>
 """
 
@@ -806,9 +984,14 @@ def generate_profile_results_html(
     svg_content,
     labels=None,
     chart_html=None,
+    svg_content_pegstyle=None,
+    chart_html_pegstyle=None,
 ):
     """Build complete HTML with embedded chart + pickets table for the Results
-    tab."""
+    tab. When svg_content_pegstyle (or its rasterised chart_html_pegstyle)
+    is given, the alternate "picchettata" rendering from
+    generate_profile_svg_pegstyle() is shown side by side with the default
+    chart for a direct visual comparison of both styles."""
     valid = [p for p in points if p.get("elevation") is not None]
     pickets = build_pickets(points, total_m)
     labels = labels or {}
@@ -835,6 +1018,17 @@ def generate_profile_results_html(
     src_label = source_labels.get(source, raster_name or "DEM/DTM")
     created_at = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
+    peg_col = ""
+    if svg_content_pegstyle:
+        peg_col = f"""
+        <div class="chart-col">
+            <h4>Peg-style / Stile picchettato
+            (rif. "Topographic profile")</h4>
+            <div class="chart-container-light">
+                {chart_html_pegstyle or svg_content_pegstyle}
+            </div>
+        </div>"""
+
     html = f"""
     <div class="summary-card">
         <strong>Project:</strong> {_html.escape(project_title)} &nbsp;·&nbsp;
@@ -848,8 +1042,13 @@ def generate_profile_results_html(
     </div>
 
     <div class="section-title">Elevation Chart / Profilo Altimetrico</div>
-    <div class="chart-container">
-        {chart_html or svg_content}
+    <div class="chart-row">
+        <div class="chart-col">
+            <h4>Current style / Stile attuale</h4>
+            <div class="chart-container">
+                {chart_html or svg_content}
+            </div>
+        </div>{peg_col}
     </div>
 
     <div class="section-title">Pickets Table / Fincatura Picchetti</div>

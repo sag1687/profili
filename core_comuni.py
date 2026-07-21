@@ -17,279 +17,276 @@
 """
 core_comuni.py — Italian municipality search and boundary loader.
 
+Boundaries come straight from ISTAT's official "Confini delle unita'
+amministrative a fini statistici" archive (non-generalised, native CRS
+EPSG:32632) rather than OpenStreetMap: the archive is downloaded once
+(~100 MB) and cached locally, then every search/fetch reads it through
+GDAL's /vsizip/ virtual filesystem with no further network round-trip.
+This is the same "big ZIP, /vsizip/ per-item access" pattern already
+used for the TINITALY raster tiles in core_raster_download.py.
+
 Public API:
-  search_comuni(query, limit) -> list[dict]
-  fetch_comune_boundary(osm_type, osm_id) -> dict | None
-  create_boundary_layer(geojson_feature, layer_name) -> QgsVectorLayer
+  ensure_istat_archive(cache_dir, progress_callback=None) -> (zip_path, stamp)
+  search_comuni(zip_path, stamp, query, limit=15) -> list[dict]
+  fetch_comune_boundary(zip_path, stamp, pro_com) -> (QgsGeometry, dict) | None
+  create_boundary_layer(qgeometry, attrs, layer_name) -> QgsVectorLayer
 """
 
-import json
-import urllib.parse
-import urllib.request
+import datetime
+import os
+import unicodedata
 
 from qgis.core import (
-    QgsProject,
-    QgsVectorLayer,
     QgsFeature,
+    QgsFeatureRequest,
+    QgsFillSymbol,
     QgsGeometry,
+    QgsProject,
+    QgsSingleSymbolRenderer,
+    QgsVectorLayer,
 )
 
-_UA = "ProfiliSezioniComuni/1.0 QGIS-plugin (+info@sinocloud.it)"
-_NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+from .core_raster_download import download_file
+
+ISTAT_BASE_URL = (
+    "https://www.istat.it/storage/cartografia/confini_amministrativi/"
+    "non_generalizzati"
+)
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Nominatim helpers
+# Archive download / cache
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _nominatim_get(endpoint, params):
-    """Perform a Nominatim GET request and return parsed JSON."""
-    query = urllib.parse.urlencode(params)
-    url = f"{_NOMINATIM_BASE}/{endpoint}?{query}"
-    if urllib.parse.urlparse(url).scheme.lower() != "https":
-        raise ValueError(f"URL non consentito / URL scheme not allowed: {url}")
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": _UA,
-            "Accept-Language": "it,en",
-        },
-    )
-    with urllib.request.urlopen(
-        req, timeout=20
-    ) as resp:  # nosec B310 - schema https validato sopra
-        return json.loads(resp.read().decode("utf-8", "replace"))
+def _istat_candidate_stamps():
+    """Yield (year, "ddmmyyyy") stamps to try, most recent first.
 
-
-# ──────────────────────────────────────────────────────────────────────
-# search_comuni
-# ──────────────────────────────────────────────────────────────────────
-
-
-def search_comuni(query, limit=10):
+    ISTAT publishes one archive per year, dated 1 January of that year,
+    but the file itself is only uploaded a little while into the year
+    (historically anywhere from January to April) — so the current
+    year's archive may not exist yet. The previous two years are tried
+    as a fallback.
     """
-    Search Italian municipalities via Nominatim.
+    current_year = datetime.date.today().year
+    for year in (current_year, current_year - 1, current_year - 2):
+        yield year, f"0101{year}"
+
+
+def _istat_zip_url(year, stamp):
+    return f"{ISTAT_BASE_URL}/{year}/Limiti{stamp}.zip"
+
+
+def _com_shapefile_path(zip_path, stamp):
+    return f"/vsizip/{zip_path}/Com{stamp}/Com{stamp}_WGS84.shp"
+
+
+def _reg_shapefile_path(zip_path, stamp):
+    return f"/vsizip/{zip_path}/Reg{stamp}/Reg{stamp}_WGS84.shp"
+
+
+def _provcm_shapefile_path(zip_path, stamp):
+    return f"/vsizip/{zip_path}/ProvCM{stamp}/ProvCM{stamp}_WGS84.shp"
+
+
+def ensure_istat_archive(cache_dir, progress_callback=None):
+    """
+    Make sure the official ISTAT administrative-boundaries archive is
+    available locally, downloading it once and reusing the cached copy
+    on every later call (download_file() skips the transfer once the
+    local file size matches the server's Content-Length).
+
+    Returns (zip_path, stamp) where stamp is the "ddmmyyyy" vintage
+    identifier used to build the archive's internal shapefile paths.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+
+    errors = []
+    for year, stamp in _istat_candidate_stamps():
+        zip_path = os.path.join(cache_dir, f"Limiti{stamp}.zip")
+        try:
+            download_file(
+                _istat_zip_url(year, stamp),
+                zip_path,
+                progress_callback,
+                0,
+                100,
+                "ISTAT — confini amministrativi",
+            )
+            return zip_path, stamp
+        except OSError as e:
+            # Network/HTTP errors (incl. 404 for a year not published yet,
+            # both urllib.error.URLError/HTTPError subclass OSError) are
+            # expected here and worth retrying with the previous year's
+            # archive. Anything else (a real bug) propagates immediately
+            # instead of being silently swallowed by a bare "except".
+            errors.append(f"{year}: {e}")
+            continue
+    raise RuntimeError(
+        "Impossibile scaricare i confini ISTAT / Could not download the "
+        "ISTAT boundaries archive: " + "; ".join(errors)
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Search
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _normalize(text):
+    """Case- and accent-insensitive comparison key."""
+    decomposed = unicodedata.normalize("NFKD", text or "")
+    return "".join(
+        c for c in decomposed if not unicodedata.combining(c)
+    ).casefold().strip()
+
+
+def _code_name_map(zip_path, stamp, path_fn, code_field, name_field):
+    layer = QgsVectorLayer(path_fn(zip_path, stamp), "lookup", "ogr")
+    if not layer.isValid():
+        return {}
+    return {
+        feat[code_field]: feat[name_field] for feat in layer.getFeatures()
+    }
+
+
+def search_comuni(zip_path, stamp, query, limit=15):
+    """
+    Search Italian municipalities by name in the cached ISTAT archive.
 
     Parameters
     ----------
-    query : str
-        Name (partial or full) of the municipality.
-    limit : int
-        Max results (default 10).
+    zip_path, stamp : as returned by ensure_istat_archive().
+    query : str — name (partial or full) of the municipality.
+    limit : int — max results (default 15).
 
     Returns
     -------
-    list[dict] with keys:
-        name, display_name, osm_id, osm_type, lat, lon, address
+    list[dict] with keys: name, pro_com, region, province, sigla
     """
     if not query or not query.strip():
         return []
 
-    params = {
-        "q": query.strip(),
-        "format": "jsonv2",
-        "countrycodes": "it",
-        "addressdetails": "1",
-        "limit": str(limit),
-        "featuretype": "settlement",
-    }
-    try:
-        results = _nominatim_get("search", params)
-    except Exception as e:
-        raise RuntimeError(f"Nominatim search error: {e}") from e
-
-    comuni = []
-    for r in results:
-        # filter to relevant types
-        osm_type = r.get("osm_type", "")
-        place_type = r.get("type", "")
-        if place_type not in (
-            "city",
-            "town",
-            "village",
-            "hamlet",
-            "municipality",
-            "administrative",
-            "suburb",
-            "quarter",
-        ):
-            continue
-        addr = r.get("address", {})
-        comuni.append(
-            {
-                "name": r.get(
-                    "name", r.get("display_name", "").split(",")[0].strip()
-                ),
-                "display_name": r.get("display_name", ""),
-                "osm_id": str(r.get("osm_id", "")),
-                "osm_type": osm_type,
-                "lat": float(r.get("lat", 0)),
-                "lon": float(r.get("lon", 0)),
-                "address": addr,
-            }
+    layer = QgsVectorLayer(
+        _com_shapefile_path(zip_path, stamp), "comuni_istat", "ogr"
+    )
+    if not layer.isValid():
+        raise RuntimeError(
+            "Impossibile aprire l'archivio ISTAT / Could not open the "
+            "ISTAT boundaries archive."
         )
-    return comuni
 
-
-# ──────────────────────────────────────────────────────────────────────
-# fetch_comune_boundary
-# ──────────────────────────────────────────────────────────────────────
-
-
-def fetch_comune_boundary(osm_type, osm_id):
-    """
-    Fetch the GeoJSON polygon for a municipality from Nominatim.
-
-    Parameters
-    ----------
-    osm_type : str   e.g. "relation", "way", "node"
-    osm_id   : str
-
-    Returns
-    -------
-    dict (GeoJSON Feature) or None
-    """
-    if not osm_id:
-        return None
-
-    # Map osm_type → Nominatim lookup type character
-    type_char = {"relation": "R", "way": "W", "node": "N"}.get(
-        (osm_type or "").lower(), "R"
+    reg_names = _code_name_map(
+        zip_path, stamp, _reg_shapefile_path, "COD_REG", "DEN_REG"
+    )
+    prov_names = _code_name_map(
+        zip_path, stamp, _provcm_shapefile_path, "COD_PROV", "DEN_UTS"
+    )
+    prov_sigle = _code_name_map(
+        zip_path, stamp, _provcm_shapefile_path, "COD_PROV", "SIGLA"
     )
 
-    params = {
-        "osm_type": type_char,
-        "osm_id": osm_id,
-        "format": "geojson",
-        "polygon_geojson": "1",
-        "addressdetails": "1",
-    }
-    try:
-        data = _nominatim_get("lookup", params)
-    except Exception as e:
-        raise RuntimeError(f"Nominatim lookup error: {e}") from e
+    needle = _normalize(query)
+    matches = []
+    for feat in layer.getFeatures():
+        name = feat["COMUNE"]
+        if needle not in _normalize(name):
+            continue
+        cod_reg = feat["COD_REG"]
+        cod_prov = feat["COD_PROV"]
+        matches.append(
+            {
+                "name": name,
+                "pro_com": feat["PRO_COM"],
+                "region": reg_names.get(cod_reg, ""),
+                "province": prov_names.get(cod_prov, ""),
+                "sigla": prov_sigle.get(cod_prov, ""),
+            }
+        )
 
-    features = data.get("features") or []
-    if not features:
-        return None
-
-    # Return first feature with a polygon geometry
-    for feat in features:
-        geom_type = (feat.get("geometry") or {}).get("type", "")
-        if geom_type in ("Polygon", "MultiPolygon"):
-            return feat
-
-    return features[0] if features else None
+    matches.sort(key=lambda m: m["name"])
+    return matches[:limit]
 
 
 # ──────────────────────────────────────────────────────────────────────
-# create_boundary_layer
+# Boundary fetch + layer creation
 # ──────────────────────────────────────────────────────────────────────
 
 
-def create_boundary_layer(geojson_feature, layer_name):
+def fetch_comune_boundary(zip_path, stamp, pro_com):
     """
-    Create a temporary in-memory QgsVectorLayer from a GeoJSON feature.
+    Fetch a single municipality's polygon geometry + attributes from the
+    cached ISTAT archive, looked up by its unique ISTAT "PRO_COM" code.
 
-    Style: green border (#22c55e), transparent fill.
-    Adds the layer to the current QGIS project.
+    Returns (QgsGeometry, dict) — geometry in the archive's native CRS
+    (EPSG:32632) plus {"name", "pro_com", "crs_authid"} — or None if the
+    code isn't found.
+    """
+    layer = QgsVectorLayer(
+        _com_shapefile_path(zip_path, stamp), "comuni_istat", "ogr"
+    )
+    if not layer.isValid():
+        raise RuntimeError(
+            "Impossibile aprire l'archivio ISTAT / Could not open the "
+            "ISTAT boundaries archive."
+        )
+
+    request = QgsFeatureRequest().setFilterExpression(
+        f'"PRO_COM" = {int(pro_com)}'
+    )
+    for feat in layer.getFeatures(request):
+        attrs = {
+            "name": feat["COMUNE"],
+            "pro_com": feat["PRO_COM"],
+            "crs_authid": layer.crs().authid(),
+        }
+        return QgsGeometry(feat.geometry()), attrs
+
+    return None
+
+
+def create_boundary_layer(qgeometry, attrs, layer_name):
+    """
+    Create an in-memory QgsVectorLayer from a single municipality
+    boundary (as returned by fetch_comune_boundary()), style it with a
+    green border / transparent fill, and add it to the current project.
 
     Returns
     -------
     QgsVectorLayer
     """
-    if not geojson_feature:
-        raise ValueError("No GeoJSON feature provided.")
+    if qgeometry is None or qgeometry.isEmpty():
+        raise ValueError("No boundary geometry to load.")
 
-    geom_data = geojson_feature.get("geometry")
-    if not geom_data:
-        raise ValueError("GeoJSON feature has no geometry.")
-
-    geom_type = geom_data.get("type", "")
-    if geom_type == "Polygon":
-        vl_type = "Polygon?crs=EPSG:4326"
-    elif geom_type == "MultiPolygon":
-        vl_type = "MultiPolygon?crs=EPSG:4326"
-    else:
-        raise ValueError(f"Unsupported geometry type: {geom_type!r}")
+    attrs = attrs or {}
+    crs_authid = attrs.get("crs_authid") or "EPSG:32632"
+    wkb_type = "MultiPolygon" if qgeometry.isMultipart() else "Polygon"
 
     vl = QgsVectorLayer(
-        f"{vl_type}&field=name:string(255)&field=display_name:string(500)",
+        f"{wkb_type}?crs={crs_authid}&field=comune:string(100)"
+        "&field=pro_com:integer",
         layer_name,
         "memory",
     )
     if not vl.isValid():
         raise RuntimeError("Failed to create in-memory vector layer.")
 
-    pr = vl.dataProvider()
     feat = QgsFeature()
-
-    geom_json = json.dumps(geom_data)
-    qgeom = QgsGeometry.fromWkt(_geojson_geom_to_wkt(geom_data))
-    if qgeom is None or qgeom.isEmpty():
-        # fallback: use fromGeoJson
-        try:
-            qgeom = QgsGeometry.fromWkt(_geojson_to_wkt_fallback(geom_json))
-        except Exception:  # nosec B110
-            pass
-
-    # Most reliable: parse via QGIS WKT
-    # If both fail, try direct fromWkt approach with GeoJSON coords
-    if qgeom is None or qgeom.isEmpty():
-        raise RuntimeError("Could not parse boundary geometry.")
-
-    feat.setGeometry(qgeom)
-    props = geojson_feature.get("properties") or {}
-    name = props.get("name") or layer_name
-    display_name = props.get("display_name") or ""
-    feat.setAttributes([name, display_name])
-    pr.addFeature(feat)
+    feat.setGeometry(qgeometry)
+    feat.setAttributes(
+        [attrs.get("name", ""), int(attrs.get("pro_com") or 0)]
+    )
+    vl.dataProvider().addFeature(feat)
     vl.updateExtents()
 
-    # Apply style
     _apply_boundary_style(vl)
-
     QgsProject.instance().addMapLayer(vl)
     return vl
-
-
-def _geojson_geom_to_wkt(geom_data):
-    """Convert a GeoJSON geometry dict to WKT string."""
-    geom_type = geom_data.get("type", "")
-    coords = geom_data.get("coordinates")
-
-    if geom_type == "Polygon":
-        return "POLYGON(" + _rings_to_wkt(coords) + ")"
-    elif geom_type == "MultiPolygon":
-        parts = []
-        for polygon in coords:
-            parts.append("(" + _rings_to_wkt(polygon) + ")")
-        return "MULTIPOLYGON(" + ",".join(parts) + ")"
-    return ""
-
-
-def _rings_to_wkt(rings):
-    """Convert a list of rings (each a list of [lon, lat]) to WKT ring
-    string."""
-    ring_strs = []
-    for ring in rings:
-        pts = ",".join(f"{pt[0]:.7f} {pt[1]:.7f}" for pt in ring)
-        ring_strs.append(f"({pts})")
-    return ",".join(ring_strs)
-
-
-def _geojson_to_wkt_fallback(geom_json_str):
-    """Fallback: use QgsGeometry.fromWkt after building WKT from JSON."""
-    data = json.loads(geom_json_str)
-    return _geojson_geom_to_wkt(data)
 
 
 def _apply_boundary_style(vl):
     """Apply a green-border, transparent-fill style to the boundary layer."""
     try:
-        from qgis.core import QgsSingleSymbolRenderer, QgsFillSymbol
-
         symbol = QgsFillSymbol.createSimple(
             {
                 "color": "0,0,0,0",  # transparent fill
@@ -299,5 +296,5 @@ def _apply_boundary_style(vl):
             }
         )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
-    except Exception:  # nosec B110
+    except Exception:  # nosec B110 - styling is best-effort, non-critical
         pass

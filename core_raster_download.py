@@ -19,11 +19,13 @@ import urllib.parse
 import urllib.request
 
 from qgis.core import (
+    Qgis,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFeature,
     QgsFillSymbol,
     QgsGeometry,
+    QgsMessageLog,
     QgsProject,
     QgsRasterLayer,
     QgsRectangle,
@@ -43,10 +45,6 @@ TINITALY_WCS_URI = (
     "identifier=TINItaly_DEM&url={0}"
 ).format(TINITALY_WCS_URL)
 TINITALY_TILE_RE = re.compile(
-
-
-
-
     r"""href=["'](?P<href>data_1\.1/"""
     r"""(?P<code>[ew]\d{5}_s10)/(?P=code)\.zip)["']""",
     re.IGNORECASE,
@@ -167,12 +165,9 @@ def bbox_wgs84_from_points(area_points):
     project = QgsProject.instance()
     crs_wgs = QgsCoordinateReferenceSystem("EPSG:4326")
     source_crs = project.crs()
-    try:
-        xform = QgsCoordinateTransform(
-            source_crs, crs_wgs, project.transformContext()
-        )
-    except Exception:
-        xform = QgsCoordinateTransform(source_crs, crs_wgs, project)
+    xform = QgsCoordinateTransform(
+        source_crs, crs_wgs, project.transformContext()
+    )
 
     xs = []
     ys = []
@@ -248,12 +243,9 @@ def _rect_intersects(a, b):
 
 def _transform_rect(rect, source_crs, target_crs):
     project = QgsProject.instance()
-    try:
-        xform = QgsCoordinateTransform(
-            source_crs, target_crs, project.transformContext()
-        )
-    except Exception:
-        xform = QgsCoordinateTransform(source_crs, target_crs, project)
+    xform = QgsCoordinateTransform(
+        source_crs, target_crs, project.transformContext()
+    )
     points = [
         xform.transform(rect.xMinimum(), rect.yMinimum()),
         xform.transform(rect.xMinimum(), rect.yMaximum()),
@@ -324,6 +316,8 @@ def _configure_gdal_network():
         "CPL_VSIL_CURL_CHUNK_SIZE": "1048576",
         "VSI_CACHE": "TRUE",
         "VSI_CACHE_SIZE": "134217728",
+        "GDAL_HTTP_TIMEOUT": "60",
+        "GDAL_HTTP_CONNECTTIMEOUT": "30",
     }
     for key, value in options.items():
         gdal.SetConfigOption(key, value)
@@ -353,6 +347,27 @@ def _gdal_callback(progress_callback, start, end, label):
     return _callback
 
 
+def polygon_wkt_in_crs(area_points, target_crs):
+    """Build a POLYGON WKT (closing the ring if needed) from a list of
+    QgsPointXY in the current project CRS, reprojected into target_crs.
+
+    A plain rectangle (as emitted by DrawRectangleAreaTool) is just a
+    4-corner polygon, so this same helper — and the cutline-based clip
+    below — covers both the rectangle and the free-hand polygon area
+    tools with no separate code path."""
+    project = QgsProject.instance()
+    xform = QgsCoordinateTransform(
+        project.crs(), target_crs, project.transformContext()
+    )
+    ring = [xform.transform(p) for p in area_points]
+    if not ring:
+        raise ValueError("The drawn download area is empty.")
+    if ring[0].x() != ring[-1].x() or ring[0].y() != ring[-1].y():
+        ring.append(ring[0])
+    coords = ", ".join(f"{p.x()} {p.y()}" for p in ring)
+    return f"POLYGON(({coords}))"
+
+
 def _clip_raster_with_gdal(
     input_raster,
     rect,
@@ -361,37 +376,59 @@ def _clip_raster_with_gdal(
     progress_callback,
     start=0,
     end=100,
+    cutline_wkt=None,
 ):
     gdal = _configure_gdal_network()
     creation_options = ["COMPRESS=DEFLATE", "TILED=YES", "BIGTIFF=IF_SAFER"]
-    options = gdal.TranslateOptions(
-        format="GTiff",
-        projWin=[
-            rect.xMinimum(),
-            rect.yMaximum(),
-            rect.xMaximum(),
-            rect.yMinimum(),
-        ],
-        projWinSRS=rect_srs,
-        noData=-9999,
-        creationOptions=creation_options,
-        callback=_gdal_callback(
-            progress_callback, start, end, "Ritaglio raster / Raster clipping"
-        ),
+    callback = _gdal_callback(
+        progress_callback, start, end, "Ritaglio raster / Raster clipping"
     )
-    result = gdal.Translate(output_path, input_raster, options=options)
+    if cutline_wkt:
+        # gdal.Warp with a cutline clips to the exact drawn shape (polygon
+        # or rectangle alike) instead of just its bounding box.
+        options = gdal.WarpOptions(
+            format="GTiff",
+            outputBounds=[
+                rect.xMinimum(),
+                rect.yMinimum(),
+                rect.xMaximum(),
+                rect.yMaximum(),
+            ],
+            outputBoundsSRS=rect_srs,
+            dstSRS=rect_srs,
+            cutlineWKT=cutline_wkt,
+            cutlineSRS=rect_srs,
+            cropToCutline=True,
+            dstNodata=-9999,
+            creationOptions=creation_options,
+            callback=callback,
+        )
+        result = gdal.Warp(output_path, input_raster, options=options)
+    else:
+        options = gdal.TranslateOptions(
+            format="GTiff",
+            projWin=[
+                rect.xMinimum(),
+                rect.yMaximum(),
+                rect.xMaximum(),
+                rect.yMinimum(),
+            ],
+            projWinSRS=rect_srs,
+            noData=-9999,
+            creationOptions=creation_options,
+            callback=callback,
+        )
+        result = gdal.Translate(output_path, input_raster, options=options)
     if result is None:
         raise RuntimeError("Raster clipping failed or was cancelled.")
     result = None
     return output_path
 
 
-def _clip_remote_raster(source_key, rect, output_path, progress_callback):
-    source_paths = (
-        [ZENODO_VSICURL, ZENODO_VSICURL_LEGACY]
-        if source_key == "hrdtm5m"
-        else [input_for_source(source_key)]
-    )
+def _clip_remote_raster(
+    rect, output_path, progress_callback, cutline_wkt=None
+):
+    source_paths = [ZENODO_VSICURL, ZENODO_VSICURL_LEGACY]
     last_error = None
     for source_path in source_paths:
         try:
@@ -403,6 +440,7 @@ def _clip_remote_raster(source_key, rect, output_path, progress_callback):
                 progress_callback,
                 0,
                 100,
+                cutline_wkt=cutline_wkt,
             )
         except Exception as exc:
             last_error = exc
@@ -417,10 +455,9 @@ def _ensure_http_url(url):
     return url
 
 
-def _download_file(url, output_path, progress_callback, start, end, label):
+def download_file(url, output_path, progress_callback, start, end, label):
     headers = {"User-Agent": "ProfiliSezioniComuni/1.2 (+info@sinocloud.it)"}
     req = urllib.request.Request(_ensure_http_url(url), headers=headers)
-    tmp_path = output_path + ".part"
     done = 0
     started = time.time()
     with urllib.request.urlopen(
@@ -429,7 +466,7 @@ def _download_file(url, output_path, progress_callback, start, end, label):
         total = int(response.headers.get("Content-Length") or 0)
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
-            if size > 0 and (not total or size == total):
+            if total and size == total:
                 _emit_progress(
                     progress_callback,
                     end,
@@ -440,30 +477,43 @@ def _download_file(url, output_path, progress_callback, start, end, label):
                     eta=0,
                 )
                 return output_path
-        with open(tmp_path, "wb") as handle:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                done += len(chunk)
-                elapsed = max(time.time() - started, 0.001)
-                speed = done / elapsed
-                eta = (total - done) / speed if total and speed > 0 else None
-                fraction = (done / total) if total else 0
-                percent = start + (end - start) * max(0.0, min(fraction, 1.0))
-                if not _emit_progress(
-                    progress_callback,
-                    percent,
-                    label,
-                    transferred=done,
-                    total=total,
-                    speed=speed,
-                    elapsed=elapsed,
-                    eta=eta,
-                ):
-                    raise RuntimeError("Download cancelled.")
-    os.replace(tmp_path, output_path)
+        out_dir = os.path.dirname(output_path) or "."
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=out_dir, prefix=".part_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    done += len(chunk)
+                    elapsed = max(time.time() - started, 0.001)
+                    speed = done / elapsed
+                    eta = (total - done) / speed if total and speed > 0 else None
+                    fraction = (done / total) if total else 0
+                    percent = start + (end - start) * max(
+                        0.0, min(fraction, 1.0)
+                    )
+                    if not _emit_progress(
+                        progress_callback,
+                        percent,
+                        label,
+                        transferred=done,
+                        total=total,
+                        speed=speed,
+                        elapsed=elapsed,
+                        eta=eta,
+                    ):
+                        raise RuntimeError("Download cancelled.")
+            os.replace(tmp_path, output_path)
+        except BaseException:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
     return output_path
 
 
@@ -480,11 +530,7 @@ def _download_tinitaly_tiles_area(
         QgsCoordinateReferenceSystem("EPSG:4326"),
         TINITALY_CRS,
     )
-    tiles = [
-        tile
-        for tile in tinitaly_tile_index()
-        if _rect_intersects(tile["extent"], rect_tinitaly)
-    ]
+    tiles = tinitaly_tiles_for_area(area_points)
     if not tiles:
         raise RuntimeError(
             "No TINITALY tile intersects the drawn area. Check that the area "
@@ -517,7 +563,7 @@ def _download_tinitaly_tiles_area(
             len(tiles),
             _format_tile_code(tile["code"]),
         )
-        _download_file(
+        download_file(
             tile["url"],
             zip_path,
             progress_callback,
@@ -537,6 +583,7 @@ def _download_tinitaly_tiles_area(
                 "Could not build temporary VRT from TINITALY ZIP tiles."
             )
         vrt = None
+        cutline_wkt = polygon_wkt_in_crs(area_points, TINITALY_CRS)
         _clip_raster_with_gdal(
             vrt_path,
             rect_tinitaly,
@@ -545,6 +592,7 @@ def _download_tinitaly_tiles_area(
             progress_callback,
             72,
             100,
+            cutline_wkt=cutline_wkt,
         )
     finally:
         if os.path.exists(vrt_path):
@@ -596,8 +644,12 @@ def create_download_area_layer(area_points, layer_name="Area download raster"):
             }
         )
         vl.setRenderer(QgsSingleSymbolRenderer(symbol))
-    except Exception:  # nosec B110
-        pass
+    except Exception as exc:
+        QgsMessageLog.logMessage(
+            f"Impossibile impostare lo stile dell'area di download: {exc}",
+            "Profili, Sezioni e Comuni",
+            Qgis.MessageLevel.Warning,
+        )
 
     project.addMapLayer(vl)
     return vl
@@ -651,8 +703,11 @@ def download_raster_area(
             0,
             "Avvio ritaglio remoto Zenodo / Starting Zenodo remote clipping",
         )
+        cutline_wkt = polygon_wkt_in_crs(
+            area_points, QgsCoordinateReferenceSystem("EPSG:4326")
+        )
         final_path = _clip_remote_raster(
-            source_key, rect, output_path, progress_callback
+            rect, output_path, progress_callback, cutline_wkt=cutline_wkt
         )
     else:
         input_raster = input_for_source(source_key)

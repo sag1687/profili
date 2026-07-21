@@ -80,9 +80,10 @@ Il flusso tipico è:
 
 - campionamento quote lungo un asse;
 - supporto a `Open-Elevation`, `OpenTopoData` o raster locale `DEM/DTM`;
-- generazione grafico profilo;
+- generazione grafico profilo, mostrato affiancato allo stile "picchettato" classico per confronto visivo;
 - creazione automatica di asse, campioni e picchetti come layer vettoriali;
-- opzione `Crea profilo 3D`: layer vettoriali Z-enabled (quota reale come coordinata Z) per la Vista Mappa 3D di QGIS, più esportazione opzionale come nuvola di punti LAS.
+- opzione `Crea profilo 3D`: layer vettoriali Z-enabled (quota reale come coordinata Z) per la Vista Mappa 3D di QGIS, più esportazione opzionale come nuvola di punti LAS;
+- opzione `ProfiloExpress`: con un raster locale selezionato, mostra un'anteprima live del profilo in una finestra fluttuante mentre si disegna l'asse sulla mappa.
 
 ### Sezioni trasversali e volumi
 
@@ -95,17 +96,16 @@ Il flusso tipico è:
 
 ### Download raster da area
 
-- selezione area con `SHIFT + trascinamento`;
+- selezione area con `SHIFT + trascinamento` (rettangolo) oppure col pulsante `Disegna poligono` (area di forma qualsiasi);
 - supporto a `TINITALY 1.1` e `HR-DTM-5m` (dataset che coprono solo il territorio italiano);
-- ritaglio dell'area e salvataggio in `GeoTIFF`;
+- ritaglio esatto sulla forma disegnata (rettangolo o poligono) e salvataggio in `GeoTIFF`;
 - scrittura automatica di una ricevuta con fonte, licenza e citazione.
 
 ### Ricerca comuni
 
-- ricerca rapida via `Nominatim`;
-- caricamento del confine in mappa;
-- possibilità di usare il comune come area di ritaglio;
-- collegamento alla fonte ufficiale ISTAT per i confini amministrativi.
+- ricerca per nome direttamente nell'archivio ufficiale ISTAT (confini amministrativi non generalizzati), scaricato una tantum (~100 MB) e messo in cache localmente;
+- caricamento del confine esatto in mappa;
+- checkbox "Usa come area di ritaglio": imposta il rettangolo di inviluppo del comune come area nella scheda Download Raster.
 
 ### Confronto prima/dopo lavori
 
@@ -362,7 +362,7 @@ Genera inoltre:
 
 ### Avvertenza
 
-Il confine caricato con Nominatim/OpenStreetMap è utile per ricerca rapida. Per usi amministrativi ufficiali, usare sempre il download ISTAT.
+Il confine viene scaricato direttamente dall'archivio ufficiale ISTAT (confini amministrativi a fini statistici, non generalizzati), quindi è già la fonte da usare per usi amministrativi ufficiali.
 
 ## Uso del tab Download Raster
 
@@ -694,9 +694,10 @@ Typical workflow:
 
 - elevation sampling along an axis;
 - support for `Open-Elevation`, `OpenTopoData` or a local `DEM/DTM` raster;
-- profile chart generation;
+- profile chart generation, shown side by side with a classic "peg-style" rendering for visual comparison;
 - automatic creation of axis, sample points and pegs as vector layers;
-- `Create 3D profile` option: Z-enabled vector layers (real elevation as the Z coordinate) for QGIS's 3D Map View, plus an optional LAS point cloud export.
+- `Create 3D profile` option: Z-enabled vector layers (real elevation as the Z coordinate) for QGIS's 3D Map View, plus an optional LAS point cloud export;
+- `ProfiloExpress` option: with a local raster selected, shows a live profile preview in a floating window while the axis is being drawn on the map.
 
 ### Cross sections and volumes
 
@@ -709,17 +710,16 @@ Typical workflow:
 
 ### Area raster download
 
-- area selection with `SHIFT + drag`;
+- area selection with `SHIFT + drag` (rectangle) or the `Draw polygon` button (arbitrarily-shaped area);
 - support for `TINITALY 1.1` and `HR-DTM-5m` (datasets covering Italy only);
-- area clipping and `GeoTIFF` output;
+- exact clipping to the drawn shape (rectangle or polygon) and `GeoTIFF` output;
 - automatic receipt with source, license and citation.
 
 ### Municipality search
 
-- fast search via `Nominatim`;
-- boundary loading on the map;
-- option to use the municipality as a clip area;
-- link to the official ISTAT source for administrative boundaries.
+- search by name directly in the official ISTAT archive (non-generalised administrative boundaries), downloaded once (~100 MB) and cached locally;
+- loads the exact boundary on the map;
+- "Use as clip area" checkbox: sets the municipality's bounding box as the area in the Download Raster tab.
 
 ### Before/after works comparison
 
@@ -976,7 +976,7 @@ Useful for:
 
 ### Warning
 
-The boundary loaded via Nominatim/OpenStreetMap is convenient for quick lookups. For official administrative use, always use the ISTAT download.
+The boundary is downloaded directly from the official ISTAT archive (administrative boundaries for statistical purposes, non-generalised), so it is already the right source for official administrative use.
 
 ## Using the Raster Download tab
 

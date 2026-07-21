@@ -600,10 +600,13 @@ def compare_dtm_rasters(
 
     srs_before = osr.SpatialReference(wkt=proj)
     proj_after = ds_after.GetProjection()
+    if not proj_after:
+        raise ValueError(
+            "Il raster 'dopo' non ha un CRS definito / 'after' raster has "
+            "no CRS."
+        )
     transform = None
-    if proj_after and not srs_before.IsSame(
-        osr.SpatialReference(wkt=proj_after)
-    ):
+    if not srs_before.IsSame(osr.SpatialReference(wkt=proj_after)):
         srs_after = osr.SpatialReference(wkt=proj_after)
         try:
             srs_after.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
@@ -621,6 +624,21 @@ def compare_dtm_rasters(
             "I due raster non si sovrappongono / the two rasters do not "
             "overlap."
         )
+
+    # Snap the intersection to the "before" raster's own pixel grid so that
+    # clipping it below is an exact crop, not a resample: gdal.Warp with
+    # "near" onto a grid whose origin/resolution already match the source
+    # would otherwise still shift every pixel by a fractional offset if the
+    # raw intersection bounds don't fall on a "before" pixel boundary.
+    px_w, px_h = gt[1], gt[5]
+    col_min = math.floor((ix_min - gt[0]) / px_w)
+    col_max = math.ceil((ix_max - gt[0]) / px_w)
+    row_min = math.floor((gt[3] - iy_max) / abs(px_h))
+    row_max = math.ceil((gt[3] - iy_min) / abs(px_h))
+    ix_min = gt[0] + col_min * px_w
+    ix_max = gt[0] + col_max * px_w
+    iy_max = gt[3] - row_min * abs(px_h)
+    iy_min = gt[3] - row_max * abs(px_h)
 
     _report(20, "Allineamento griglie / Aligning grids")
     warp_opts = dict(
