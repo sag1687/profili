@@ -1080,8 +1080,13 @@ class ProfiliSezioniComuniPlugin:
 
     def _on_area_drawn(self, points):
         canvas = self.iface.mapCanvas()
-        tool = self.sender()
-        if tool is not None and canvas.mapTool() is tool:
+        # self.sender() is a QObject feature; ProfiliSezioniComuniPlugin is
+        # a plain Python object, so it isn't available here. Both the
+        # rectangle and polygon area tools connect to this same slot, and
+        # whichever one just finished drawing is still the active map tool
+        # at this point, so we can identify it that way instead.
+        tool = canvas.mapTool()
+        if tool in (self.area_tool, self.area_tool_polygon):
             canvas.unsetMapTool(tool)
         self.dialog.show()
         try:
