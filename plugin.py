@@ -3001,7 +3001,12 @@ class ProfiliSezioniComuniPlugin:
         return found
 
     def _collect_print_charts(self):
-        """One entry per available chart, each printed on its own sheet."""
+        """One entry per available chart, each printed on its own sheet.
+        svg_w/svg_h are the fixed canvas sizes generate_profile_svg() /
+        generate_cross_sections_svg() draw at (core_elevation.py,
+        core_sections.py) — used to size each sheet's picture frame to the
+        chart's actual aspect ratio instead of a generic fixed box, so it
+        fills the available space edge-to-edge without letterboxing."""
         charts = []
         if self.last_profile_svg:
             charts.append(
@@ -3009,6 +3014,8 @@ class ProfiliSezioniComuniPlugin:
                     "svg": self.last_profile_svg,
                     "title": "Profilo altimetrico / Elevation profile",
                     "layers": self._layers_by_prefix(("profilo_picchetti",)),
+                    "svg_w": 1600,
+                    "svg_h": 1040,
                 }
             )
         if self.last_sections_svg:
@@ -3021,9 +3028,60 @@ class ProfiliSezioniComuniPlugin:
                     "layers": self._layers_by_prefix(
                         ("centri sezione", "tratte volumi")
                     ),
+                    "svg_w": 1700,
+                    "svg_h": 1100,
                 }
             )
         return charts
+
+    def _detect_comune_layer_name(self):
+        """Return the municipality name from a "Confine — <nome>" / "Boundary
+        — <nome>" layer if one was loaded via the Comuni tab (core_comuni.py
+        create_boundary_layer()), so the print sheet can state the
+        municipality without the user having to type it in manually."""
+        for layer in QgsProject.instance().mapLayers().values():
+            name = layer.name()
+            for prefix in ("Confine — ", "Boundary — "):
+                if name.startswith(prefix):
+                    return name[len(prefix):].strip()
+        return None
+
+    def _print_summary_line(self):
+        """One-line bilingual summary of the computed result (distance,
+        elevation range, and — when cross sections were run — cut/fill
+        volumes and section count), so the printed sheet is self-contained
+        without needing the Results tab open."""
+        parts = []
+        points_data = getattr(self, "last_points_data", None)
+        total_dist = getattr(self, "last_total_dist", None)
+        if points_data and total_dist is not None:
+            elevations = [
+                p["elevation"]
+                for p in points_data
+                if p.get("elevation") is not None
+            ]
+            parts.append(
+                f"Distanza/Distance: {total_dist:.1f} m"
+            )
+            if elevations:
+                z_min, z_max = min(elevations), max(elevations)
+                parts.append(
+                    f"Quota/Elevation: {z_min:.2f}÷{z_max:.2f} m "
+                    f"(Δ {z_max - z_min:.2f} m)"
+                )
+        sections_data = self.last_cross_sections_data
+        if sections_data:
+            parts.append(
+                f"Sterro/Cut: {sections_data.get('total_cut_m3', 0):.1f} m³"
+            )
+            parts.append(
+                f"Riporto/Fill: {sections_data.get('total_fill_m3', 0):.1f} "
+                "m³"
+            )
+            n_sections = sections_data.get("n_sections")
+            if n_sections:
+                parts.append(f"N. sezioni/Sections: {n_sections}")
+        return "   ·   ".join(parts)
 
     @staticmethod
     def _nice_grid_interval(span):
@@ -3081,6 +3139,28 @@ class ProfiliSezioniComuniPlugin:
 
         page = layout.pageCollection().pages()[0]
         page.setPageSize(QgsLayoutSize(420, 297, mm))
+
+        # ── Outer sheet border, standard practice on a technical/
+        # cartographic plot ──
+        try:
+            from qgis.core import QgsFillSymbol as _QgsFillSymbol
+
+            border = QgsLayoutItemShape(layout)
+            border.setShapeType(QgsLayoutItemShape.Shape.Rectangle)
+            layout.addLayoutItem(border)
+            border.attemptMove(QgsLayoutPoint(5, 5, mm), True, False, 0)
+            border.attemptResize(QgsLayoutSize(410, 287, mm))
+            border.setSymbol(
+                _QgsFillSymbol.createSimple(
+                    {
+                        "color": "0,0,0,0",
+                        "outline_color": "45,55,87,255",
+                        "outline_width": "0.4",
+                    }
+                )
+            )
+        except Exception:  # nosec B110
+            pass
 
         # ── Map with buffered extent ──
         geom = QgsGeometry.fromPolylineXY(points)
@@ -3305,11 +3385,18 @@ class ProfiliSezioniComuniPlugin:
             scale_txt = f"1:{int(round(map_item.scale())):,}".replace(",", ".")
         except Exception:
             scale_txt = "n/d"
+        comune = self._detect_comune_layer_name()
+        crs_line = f"CRS: {project.crs().authid()}   ·   Scala / Scale: {scale_txt}"
+        if comune:
+            crs_line += f"   ·   Comune / Municipality: {comune}"
+        summary_line = self._print_summary_line()
+        n_sheets = len(charts) + 1
         _label(
             title, 30, 244, 170, 9, size=15, bold=True, color=TEXT_LIGHT
         )
         _label(
-            "Profili, Sezioni e Comuni — Dott. Sarino Alfonso Grande",
+            summary_line
+            or "Profili, Sezioni e Comuni — Dott. Sarino Alfonso Grande",
             14,
             257,
             186,
@@ -3318,7 +3405,7 @@ class ProfiliSezioniComuniPlugin:
             color=TEXT_MUTED,
         )
         _label(
-            f"Data / Date: {created}",
+            f"Data / Date: {created}   ·   Foglio / Sheet 1/{n_sheets}",
             14,
             263,
             186,
@@ -3327,7 +3414,7 @@ class ProfiliSezioniComuniPlugin:
             color=TEXT_MUTED,
         )
         _label(
-            f"CRS: {project.crs().authid()}   ·   Scala / Scale: {scale_txt}",
+            crs_line,
             14,
             269,
             186,
@@ -3337,7 +3424,8 @@ class ProfiliSezioniComuniPlugin:
         )
         _label(
             "Quote indicative — non idonee a progettazione strutturale / "
-            "Indicative elevations — not for structural design",
+            "Indicative elevations — not for structural design   ·   "
+            "Profili, Sezioni e Comuni — Dott. Sarino Alfonso Grande",
             14,
             276,
             190,
@@ -3377,6 +3465,28 @@ class ProfiliSezioniComuniPlugin:
                 )
                 continue
 
+            try:
+                from qgis.core import QgsFillSymbol as _QgsFillSymbol2
+
+                extra_border = QgsLayoutItemShape(layout)
+                extra_border.setShapeType(QgsLayoutItemShape.Shape.Rectangle)
+                layout.addLayoutItem(extra_border)
+                extra_border.attemptMove(
+                    QgsLayoutPoint(5, 5, mm), True, False, page_idx
+                )
+                extra_border.attemptResize(QgsLayoutSize(410, 287, mm))
+                extra_border.setSymbol(
+                    _QgsFillSymbol2.createSimple(
+                        {
+                            "color": "0,0,0,0",
+                            "outline_color": "45,55,87,255",
+                            "outline_width": "0.4",
+                        }
+                    )
+                )
+            except Exception:  # nosec B110
+                pass
+
             _label(
                 chart["title"],
                 10,
@@ -3406,6 +3516,26 @@ class ProfiliSezioniComuniPlugin:
             except Exception:  # nosec B110
                 pass
 
+            # Size the chart picture to its own aspect ratio instead of a
+            # generic fixed box: with Zoom resize mode a mismatched box just
+            # letterboxes (wasted white space, smaller print), so we compute
+            # the largest rectangle that (a) preserves the SVG's real aspect
+            # ratio and (b) fits the space actually available above the
+            # attribute table(s) — or the whole sheet height when a chart
+            # has no table to show, which is by far the more common case.
+            table_layers = chart.get("layers") or []
+            area_top, area_bottom = 22.0, 286.0
+            table_h, table_gap = (108.0, 6.0) if table_layers else (0.0, 0.0)
+            chart_max_w = 400.0
+            chart_max_h = (area_bottom - area_top) - (table_h + table_gap)
+            aspect = chart.get("svg_w", 1600) / chart.get("svg_h", 1040)
+            if chart_max_w / aspect <= chart_max_h:
+                chart_w, chart_h = chart_max_w, chart_max_w / aspect
+            else:
+                chart_w, chart_h = chart_max_h * aspect, chart_max_h
+            chart_x = 10.0 + (chart_max_w - chart_w) / 2.0
+            table_y = area_top + chart_h + table_gap
+
             try:
                 svg_path = self._write_chart_svg(chart["svg"], "foglio")
                 pic = QgsLayoutItemPicture(layout)
@@ -3413,13 +3543,15 @@ class ProfiliSezioniComuniPlugin:
                 pic.setResizeMode(QgsLayoutItemPicture.ResizeMode.Zoom)
                 layout.addLayoutItem(pic)
                 pic.attemptMove(
-                    QgsLayoutPoint(10, 22, mm), True, False, page_idx
+                    QgsLayoutPoint(chart_x, area_top, mm),
+                    True,
+                    False,
+                    page_idx,
                 )
-                pic.attemptResize(QgsLayoutSize(400, 150, mm))
+                pic.attemptResize(QgsLayoutSize(chart_w, chart_h, mm))
             except Exception:  # nosec B110
                 pass
 
-            table_layers = chart.get("layers") or []
             table_x = 10
             table_w = 400 if len(table_layers) < 2 else 197
             for table_layer in table_layers[:2]:
@@ -3443,10 +3575,13 @@ class ProfiliSezioniComuniPlugin:
                     except Exception:  # nosec B110
                         pass
                     frame = QgsLayoutFrame(layout, table)
-                    frame.attemptResize(QgsLayoutSize(table_w, 108, mm))
+                    frame.attemptResize(QgsLayoutSize(table_w, table_h, mm))
                     table.addFrame(frame)
                     frame.attemptMove(
-                        QgsLayoutPoint(table_x, 178, mm), True, False, page_idx
+                        QgsLayoutPoint(table_x, table_y, mm),
+                        True,
+                        False,
+                        page_idx,
                     )
                     table_x += table_w + 6
                 except Exception:  # nosec B110

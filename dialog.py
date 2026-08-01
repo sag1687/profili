@@ -705,7 +705,7 @@ INFO_HTML = """
 
 <hr class="section-sep"/>
 <p style="color:#3a6070;font-size:11px;">
-  Plugin: Profili, Sezioni e Comuni v1.6.3 &nbsp;·&nbsp;
+  Plugin: Profili, Sezioni e Comuni v1.6.4 &nbsp;·&nbsp;
   Autore: Dott. Sarino Alfonso Grande &nbsp;·&nbsp;
   <a href="mailto:info@sinocloud.it">info@sinocloud.it</a>
 </p>
