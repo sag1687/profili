@@ -3063,9 +3063,7 @@ class ProfiliSezioniComuniPlugin:
         # style (core_elevation.py / core_sections.py SVG generators), so
         # the printed layout's chrome (title block, frames, accents) reads
         # as one coherent product with the on-screen charts.
-        PANEL_BG = QColor("#12151e")
         PANEL_BORDER = QColor("#2d3757")
-        ACCENT = QColor("#4f73c4")
         TEXT_LIGHT = QColor("#f1f5f9")
         TEXT_MUTED = QColor("#8ba3c7")
         TEXT_DIM = QColor("#566584")

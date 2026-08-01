@@ -25,9 +25,19 @@ GDAL's /vsizip/ virtual filesystem with no further network round-trip.
 This is the same "big ZIP, /vsizip/ per-item access" pattern already
 used for the TINITALY raster tiles in core_raster_download.py.
 
+The municipality name/region/province lookup is read from the archive once
+per session into a plain in-memory list (build_comuni_index()) rather than
+re-opening the three shapefiles on every keystroke: with ~7900 municipalities
+the one-off scan takes a fraction of a second, while filtering the resulting
+list is effectively instant. A static JSON bundled with the plugin was
+considered instead, but ISTAT revises this archive yearly, so a bundled copy
+would silently go stale — deriving the index from the same freshly-downloaded
+archive keeps it always correct without extra maintenance.
+
 Public API:
   ensure_istat_archive(cache_dir, progress_callback=None) -> (zip_path, stamp)
-  search_comuni(zip_path, stamp, query, limit=15) -> list[dict]
+  build_comuni_index(zip_path, stamp) -> list[dict]
+  search_comuni(index, query, limit=15) -> list[dict]
   fetch_comune_boundary(zip_path, stamp, pro_com) -> (QgsGeometry, dict) | None
   create_boundary_layer(qgeometry, attrs, layer_name) -> QgsVectorLayer
 """
@@ -150,23 +160,17 @@ def _code_name_map(zip_path, stamp, path_fn, code_field, name_field):
     }
 
 
-def search_comuni(zip_path, stamp, query, limit=15):
+def build_comuni_index(zip_path, stamp):
     """
-    Search Italian municipalities by name in the cached ISTAT archive.
+    Scan the cached ISTAT archive once and return every municipality as a
+    plain list[dict] with keys: name, pro_com, region, province, sigla,
+    plus a precomputed "_needle" (accent/case-insensitive name) used by
+    search_comuni() to filter without touching the shapefile again.
 
-    Parameters
-    ----------
-    zip_path, stamp : as returned by ensure_istat_archive().
-    query : str — name (partial or full) of the municipality.
-    limit : int — max results (default 15).
-
-    Returns
-    -------
-    list[dict] with keys: name, pro_com, region, province, sigla
+    Call this once per session (after ensure_istat_archive()) and reuse the
+    result for every search — that's what makes typing in the search box
+    responsive despite the archive holding ~7900 municipalities.
     """
-    if not query or not query.strip():
-        return []
-
     layer = QgsVectorLayer(
         _com_shapefile_path(zip_path, stamp), "comuni_istat", "ogr"
     )
@@ -186,26 +190,49 @@ def search_comuni(zip_path, stamp, query, limit=15):
         zip_path, stamp, _provcm_shapefile_path, "COD_PROV", "SIGLA"
     )
 
-    needle = _normalize(query)
-    matches = []
+    index = []
     for feat in layer.getFeatures():
         name = feat["COMUNE"]
-        if needle not in _normalize(name):
-            continue
         cod_reg = feat["COD_REG"]
         cod_prov = feat["COD_PROV"]
-        matches.append(
+        index.append(
             {
                 "name": name,
                 "pro_com": feat["PRO_COM"],
                 "region": reg_names.get(cod_reg, ""),
                 "province": prov_names.get(cod_prov, ""),
                 "sigla": prov_sigle.get(cod_prov, ""),
+                "_needle": _normalize(name),
             }
         )
+    return index
 
+
+def search_comuni(index, query, limit=15):
+    """
+    Filter a municipality index (as returned by build_comuni_index()) by
+    name. Pure in-memory operation, no I/O.
+
+    Parameters
+    ----------
+    index : list[dict] — as returned by build_comuni_index().
+    query : str — name (partial or full) of the municipality.
+    limit : int — max results (default 15).
+
+    Returns
+    -------
+    list[dict] with keys: name, pro_com, region, province, sigla
+    """
+    if not query or not query.strip():
+        return []
+
+    needle = _normalize(query)
+    matches = [entry for entry in index if needle in entry["_needle"]]
     matches.sort(key=lambda m: m["name"])
-    return matches[:limit]
+    return [
+        {k: v for k, v in m.items() if k != "_needle"}
+        for m in matches[:limit]
+    ]
 
 
 # ──────────────────────────────────────────────────────────────────────

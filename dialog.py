@@ -705,7 +705,7 @@ INFO_HTML = """
 
 <hr class="section-sep"/>
 <p style="color:#3a6070;font-size:11px;">
-  Plugin: Profili, Sezioni e Comuni v1.2.0 &nbsp;·&nbsp;
+  Plugin: Profili, Sezioni e Comuni v1.6.2 &nbsp;·&nbsp;
   Autore: Dott. Sarino Alfonso Grande &nbsp;·&nbsp;
   <a href="mailto:info@sinocloud.it">info@sinocloud.it</a>
 </p>
@@ -959,6 +959,7 @@ class ProfiliSezioniComuniDialog(QDialog):
         self._download_area_points = None
         self._istat_zip_path = None  # cached ISTAT archive (this session)
         self._istat_stamp = None
+        self._istat_comuni_index = None  # cached municipality list (session)
 
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(10)
@@ -2429,6 +2430,25 @@ class ProfiliSezioniComuniDialog(QDialog):
         self._istat_stamp = stamp
         return zip_path, stamp
 
+    def _ensure_comuni_index(self):
+        """Build (once per session) or reuse the in-memory municipality
+        index, so every search after the first is a pure in-memory filter
+        instead of re-scanning the ISTAT shapefiles."""
+        from .core_comuni import build_comuni_index
+
+        zip_path, stamp = self._ensure_istat_ready()
+        if self._istat_comuni_index is None:
+            self.lbl_comuni_status.setText(
+                _t(
+                    self.lang,
+                    "Indicizzo i comuni (una tantum)...",
+                    "Indexing municipalities (one-off)...",
+                )
+            )
+            QApplication.processEvents()
+            self._istat_comuni_index = build_comuni_index(zip_path, stamp)
+        return self._istat_comuni_index
+
     def do_comuni_search(self):
         from .core_comuni import search_comuni
 
@@ -2436,14 +2456,14 @@ class ProfiliSezioniComuniDialog(QDialog):
         if not query:
             return
         L = self.lang
-        # Disabled for the duration: _ensure_istat_ready()/search_comuni()
-        # pump the event loop (first-time ~100 MB download, shapefile
-        # scan), so a second click here would re-enter this method while
-        # the first call still has the cache zip open/being written.
+        # Disabled for the duration: _ensure_comuni_index() pumps the event
+        # loop on the first call (~100 MB download, one-off shapefile scan),
+        # so a second click here would re-enter this method while the first
+        # call still has the cache zip open/being written.
         self.btn_comuni_search.setEnabled(False)
         try:
             try:
-                zip_path, stamp = self._ensure_istat_ready()
+                index = self._ensure_comuni_index()
             except Exception as e:
                 self.lbl_comuni_status.setText(
                     _t(L, f"Errore: {e}", f"Error: {e}")
@@ -2455,7 +2475,7 @@ class ProfiliSezioniComuniDialog(QDialog):
             )
             QApplication.processEvents()
             try:
-                results = search_comuni(zip_path, stamp, query, limit=15)
+                results = search_comuni(index, query, limit=15)
                 self._comuni_results = results
                 self.list_comuni.clear()
                 if not results:
