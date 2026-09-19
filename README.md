@@ -4,6 +4,7 @@
 
 [![Version](https://img.shields.io/badge/Version-1.6.5-1e6fb8?style=for-the-badge)]()
 [![QGIS](https://img.shields.io/badge/QGIS-%E2%89%A5%203.16-589632?style=for-the-badge&logo=qgis&logoColor=white)]()
+[![Ultimo Aggiornamento](https://img.shields.io/badge/Ultimo_Aggiornamento-01/08/2026-ff69b4?style=for-the-badge)]()
 [![License](https://img.shields.io/badge/License-GPL--2.0-bd0000?style=for-the-badge)]()
 
 **IT: Profili altimetrici (con anteprima live ProfiloExpress), sezioni con volumi di sterro/riporto, download DTM, ricerca comuni via ISTAT e confronto prima/dopo. / EN: Elevation profiles (with a live ProfiloExpress preview), cross sections with cut/fill volumes, DTM download, ISTAT-based municipality search and before/after comparison.**
